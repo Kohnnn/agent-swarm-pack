@@ -34,6 +34,7 @@ export interface Agent {
   department?: Department;
   role: AgentRole;
   acts_as_planning_leader?: number | null;
+  workflow_pack_key?: string;
   cli_provider: CliProvider;
   oauth_account_id?: string | null;
   api_provider_id?: string | null;

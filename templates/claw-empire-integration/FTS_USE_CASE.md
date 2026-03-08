@@ -26,7 +26,11 @@ Because the `claw-empire` repository itself is git-ignored (we prefer to clone i
 - `src/types/index.ts`
 - `src/app/office-workflow-pack.ts`
 - `server/modules/workflow/packs/definitions.ts`
-- `server/modules/routes/core/tasks/execution-run-auto-assign.ts`
+- `src/components/settings/gateway-settings/state.ts`
+- `src/components/settings/gateway-settings/ChatEditorModal.tsx`
+- `src/components/settings/GatewaySettingsTab.tsx`
+
+These UI patches specifically ensure that your **Add Chat** modal defaults correctly to the FTS workflow pack, and perfectly isolates the FTS agents in the dropdown, keeping your settings consistent between updates.
 
 ### Automatic Installation
 
@@ -39,3 +43,12 @@ The root `setup_claw_empire.bat` script automatically manages this integration f
 5. It runs `node --experimental-sqlite register_agents.js` to insert the 9 custom FTS agents specifically under the `workflow_pack_key: 'fts'`.
 
 With this setup, the FTS Office Pack and its associated agent avatars will natively appear in your application without risking the loss of your changes if you delete or update the `claw-empire` folder!
+
+## FTS Manager Tools (Claw-Empire v2.0.3+)
+
+As the CEO/Manager of the Fintech Startup, you can leverage newer engine features to ensure high-quality output:
+
+- **Final Branch Verification**: Before completing a task, use the **Diff Modal** on the Taskboard to see the worktree verification verdict (`ok`, `no_worktree`, `no_commit`, etc.). This tells you instantly if the agent actually committed code matching their plan.
+- **Reporting & Avatars**: Completed FTS task reports now preserve the branch verification evidence permanently. Even if you swap out your FTS agents for the default `development` pack later, the task completion reports will retain the original FTS agent avatars instead of falling back to default emojis.
+- **Auditing FTS Staff**: If an FTS agent gets stuck on a "break", run `node scripts/cleanup-staff.mjs` to reset them to `idle` cleanly.
+- **Windows Local Dev Launchers**: Spin up the FTS office safely by running `.\scripts\run-claw-empire-dev-local.cmd` in the `claw-empire` directory to automatically clean up old stray Node processes.

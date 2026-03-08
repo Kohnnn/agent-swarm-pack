@@ -126,6 +126,12 @@ Copy `.env.example` to `.env`. **Never commit `.env` to version control.**
 # Development (local-only, recommended)
 pnpm dev:local        # binds to 127.0.0.1
 
+# Windows Users: Robust local dev launcher (auto-cleans old processes on start)
+.\scripts\run-claw-empire-dev-local.cmd
+
+# Windows Users: Safe shutdown to release ports
+.\scripts\kill-claw-empire-dev.ps1
+
 # Development (network-accessible)
 pnpm dev              # binds to 0.0.0.0
 
@@ -134,7 +140,7 @@ pnpm build            # TypeScript check + Vite build
 pnpm start            # serves dist in production mode
 ```
 
-### Health Check
+### Health Check & Auditing
 In a separate terminal:
 ```powershell
 curl -s http://127.0.0.1:8790/healthz
@@ -142,6 +148,13 @@ curl -s http://127.0.0.1:8790/healthz
 Expected response: `{"ok":true,...}`
 
 Open the UI in your browser at: **`http://127.0.0.1:8800`**
+
+**Auditing Agent States (Staff Cleanup):**
+If you ever find an agent stuck on a "break" or need to audit role distribution, a built-in utility is available (added in v2.0.3):
+```powershell
+node scripts/cleanup-staff.mjs
+```
+This utility resets stuck staff to `idle`, reports role distribution, and detects duplicate names.
 
 ---
 
