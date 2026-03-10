@@ -8,7 +8,9 @@ Primary source: [awesome-openclaw-usecases](https://github.com/hesamsheikh/aweso
 
 ## 🚀 New and Notable (2026)
 
-- **FTS: Fintech Startup Autonomous Team:** 9-agent compact fintech dev org with planning, engineering, and compliance departments — see [`templates/claw-empire-integration/FTS_USE_CASE.md`](templates/claw-empire-integration/FTS_USE_CASE.md).
+- **AgentSwarm Software Delivery Pack:** compact `software-6` hybrid crew for build, review, and deployment loops — see [`agentsswarm/README.md`](agentsswarm/README.md).
+- **AgentSwarm Support Pack:** compact `support-5` workflow for Telegram / Discord / WhatsApp support routing — see [`agentsswarm/README.md`](agentsswarm/README.md).
+- **SwarmClaw Control Plane Ops:** optional dashboard-driven OpenClaw gateway operations, connector routing, and scheduled automation loops — see [`SWARMCLAW_SETUP.md`](SWARMCLAW_SETUP.md).
 - **Multi-Agent Specialized Team:** strategy + dev + marketing + business agents coordinated from one chat.
 - **Custom Morning Brief:** fully personalized daily brief with tasks, news, and recommended actions.
 - **Family Calendar & Household Assistant:** combines schedules, reminders, and home inventory workflows.
@@ -28,6 +30,7 @@ Primary source: [awesome-openclaw-usecases](https://github.com/hesamsheikh/aweso
 
 ## 🎨 Creative and Building
 
+- **Compact Chat-First Delivery Team:** use AgentSwarm `software-6` to receive `$` and `#` work from chat, keep a minimal board, and run immediately.
 - **Goal-Driven Autonomous Tasks (Overnight Mini App Builder):** convert goal dumps into scheduled execution.
 - **YouTube Content Pipeline:** research -> script -> content planning.
 - **Multi-Agent Content Factory:** research, writing, and thumbnail agents working in dedicated channels.
@@ -45,6 +48,7 @@ Primary source: [awesome-openclaw-usecases](https://github.com/hesamsheikh/aweso
 
 ## 📈 Productivity and Operations
 
+- **AgentSwarm Founder Desk:** one compact runtime with compact packs, provider profiles, and channel relay instead of a heavy office UI.
 - **Autonomous Project Management:** state-driven coordination across repositories and issue trackers.
 - **Multi-Channel AI Customer Service:** unify support channels in one agent workflow.
 - **Phone-Based Personal Assistant:** interact with your assistant by call or SMS.
@@ -77,7 +81,8 @@ Primary source: [awesome-openclaw-usecases](https://github.com/hesamsheikh/aweso
 
 ## 💰 Finance and Trading
 
-- **FTS: Fintech Startup Pack:** pre-built 9-agent autonomous team (Orchestrator + Security Architect + 4 Engineering + QA Lead + 2 Compliance roles). Ships inside the `setup_claw_empire` installer scripts — see [`FTS_USE_CASE.md`](templates/claw-empire-integration/FTS_USE_CASE.md).
+- **AgentSwarm Research + Ops Packs:** pair `research-5` and `ops-5` for market scans, alerts, and execution guardrails — see [`agentsswarm/README.md`](agentsswarm/README.md).
+- **Legacy FTS Office Pack:** older 9-agent fintech office reference remains available in [`templates/claw-empire-integration/FTS_USE_CASE.md`](templates/claw-empire-integration/FTS_USE_CASE.md).
 - **Polymarket Autopilot:** paper-trading style automation and performance reporting.
 
 Use strict safety controls and small limits for any finance-related automation.

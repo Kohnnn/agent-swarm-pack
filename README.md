@@ -6,7 +6,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
 [![OpenClaw](https://img.shields.io/badge/Powered%20By-OpenClaw-blue.svg)](https://github.com/SamurAIGPT/awesome-openclaw)
 
-**The ultimate playbook for building an autonomous AI Agent Swarm. From single-agent chat setups to enterprise-grade Multi-Agent Orchestration and virtual Office Simulators (Fintech Teams, QA bots, and Automated Trading structures), powered entirely by OpenClaw.**
+**The practical playbook for building a compact OpenClaw AgentSwarm. Start with the local `agentsswarm/` app, connect Discord/Telegram/WhatsApp, add multi-provider execution, and optionally layer on SwarmClaw for control-plane operations.**
 
 </div>
 
@@ -16,8 +16,9 @@
 
 - [March 2026 Refresh](#-march-2026-refresh)
 - [What This Repo Is](#-what-this-repo-is)
-- [Quick Start (OpenClaw Host)](#-quick-start-openclaw-host)
-- [Claw-Empire: AI Agent Office](#️-claw-empire-ai-agent-office)
+- [Quick Start (AgentSwarm App)](#-quick-start-agentswarm-app)
+- [AgentSwarm App](#-agentswarm-app)
+- [SwarmClaw Companion Dashboard](#-swarmclaw-companion-dashboard)
 - [Architecture: Agent Progression](#-architecture-agent-progression)
 - [Models: Latest Provider Snapshot](#-models-latest-provider-snapshot)
 - [Messaging Apps: Latest Channel Snapshot](#-messaging-apps-latest-channel-snapshot)
@@ -37,78 +38,149 @@
 - **Messaging docs now list 20+ channels**, including WhatsApp, Telegram, Discord, Slack, Signal, Teams, Matrix, Zalo, and more.
 - **Deployment guide rewritten for multi-agent** using current `openclaw agents`, bindings, and sub-agent patterns.
 - **Use cases updated** with newer community patterns from `awesome-openclaw-usecases` (including multi-agent specialized team and custom morning brief).
-- **Claw-Empire integration added**: 1-click setup via `setup_claw_empire.bat` now includes the **FTS: Fintech Startup** office pack (9-agent autonomous team) and applies custom source overrides automatically.
-- **FTS Office Pack**: 3 departments, 9 agents (Orchestrator, Security Architect, Sub1-3, Data Engineer, Reviewer, Test Automation Engineer, Compliance Auditor) pre-registered in the `fts` workflow pack key.
+- **AgentSwarm app finalized** in `agentsswarm/` as the primary local runtime for chat-first orchestration.
+- **Root setup/start scripts now center on AgentSwarm** with env sync, optional CLI installs, preflight checks, and compact hybrid defaults.
+- **Compact packs now default to under 8 agents**, with `software-6`, `ops-5`, `research-5`, and `support-5` built in.
+- **Multi-provider + multi-Copilot profiles** are exposed directly from the AgentSwarm CLI and runtime.
+- **SwarmClaw remains available as an optional companion** for control-plane operations and gateway management.
 
 ---
 
 ## ✅ What This Repo Is
 
-This repository is a comprehensive set of **docs, diagrams, and integration templates** representing modern OpenClaw ecosystem deployment patterns for **Autonomous AI Agents**:
+This repository is a practical set of **docs, launchers, diagrams, and integration templates** for modern OpenClaw multi-agent deployment, centered on the local AgentSwarm app:
 
+- [`agentsswarm/README.md`](agentsswarm/README.md): the primary compact app for `$`/`#` command routing, chat relay, compact packs, and provider profiles.
 - [`OPENCLAW_SETUP.md`](OPENCLAW_SETUP.md): current model and messaging setup (Discord, Telegram).
 - [`MULTI_AGENT_SETUP.md`](MULTI_AGENT_SETUP.md): initial multi-agent workspace generation and routing.
 - [`DEPLOYMENT_GUIDE.md`](DEPLOYMENT_GUIDE.md): advanced multi-agent operations and team topologies.
-- [`CLAW_EMPIRE_SETUP.md`](CLAW_EMPIRE_SETUP.md): install and configure the Claw-Empire visual AI office simulator.
+- [`SWARMCLAW_SETUP.md`](SWARMCLAW_SETUP.md): install and configure SwarmClaw as the optional operations/control-plane dashboard.
+- [`SWARMCLAW_GUIDANCE.md`](SWARMCLAW_GUIDANCE.md): decide when to stay with AgentSwarm only and when to add SwarmClaw.
 - [`USECASES.md`](USECASES.md): curated real-world use-case ideas (automated trading, research, content).
-- [`templates/claw-empire-integration/`](templates/claw-empire-integration/): The **FTS Office Pack**, a complete 9-agent Fintech Startup source override with Windows/Linux automated registration scripts.
+- [`templates/claw-empire-integration/`](templates/claw-empire-integration/): legacy visual office reference material and the older FTS office pack overrides.
 
-It acts as the neural bridge linking standard OpenClaw execution loops with the Claw-Empire interface, offering seamless 1-click deployments of complex agent swarms.
+Use `agentsswarm/` as the main runtime, OpenClaw as the execution backbone, and SwarmClaw only when you need dashboard-style gateway and connector operations.
 
 ---
 
-## 🚀 Quick Start (OpenClaw Host)
+## 🚀 Quick Start (AgentSwarm App)
 
-Use these commands on the machine where OpenClaw runs:
+On the machine where OpenClaw runs:
 
 ```bash
 npm install -g openclaw@latest
 openclaw onboard --install-daemon
-openclaw dashboard
 ```
 
-Then continue with:
+Then set up AgentSwarm from this repo root:
 
-1. [`OPENCLAW_SETUP.md`](OPENCLAW_SETUP.md) for models + channels.
-2. [`DEPLOYMENT_GUIDE.md`](DEPLOYMENT_GUIDE.md) for multi-agent routing.
-3. [`MULTI_AGENT_SETUP.md`](MULTI_AGENT_SETUP.md) for multi-agent setup.
-4. [`CLAW_EMPIRE_SETUP.md`](CLAW_EMPIRE_SETUP.md) for the AI office simulator + FTS pack.
-5. [`USECASES.md`](USECASES.md) to pick a workflow blueprint.
+Windows:
+
+```powershell
+.\setup_agentsswarm.bat --install-openclaw --install-provider-clis
+.\start_agentsswarm.bat --doctor
+```
+
+macOS/Linux:
+
+```bash
+./setup_agentsswarm.sh --install-openclaw --install-provider-clis
+./start_agentsswarm.sh --doctor
+```
+
+Recommended follow-up order:
+
+1. [`agentsswarm/README.md`](agentsswarm/README.md) for the runtime, CLI, compact packs, and channel contract.
+2. [`OPENCLAW_SETUP.md`](OPENCLAW_SETUP.md) for providers and base messaging auth.
+3. [`MULTI_AGENT_SETUP.md`](MULTI_AGENT_SETUP.md) for isolated agents and bindings.
+4. [`DEPLOYMENT_GUIDE.md`](DEPLOYMENT_GUIDE.md) for routing, sub-agents, and ops.
+5. [`SWARMCLAW_SETUP.md`](SWARMCLAW_SETUP.md) only if you want a dashboard/control-plane companion.
+6. [`USECASES.md`](USECASES.md) to pick a workflow blueprint.
 
 ---
 
-## 🏢 Claw-Empire: AI Agent Office Simulator
+## 🤖 AgentSwarm App
 
-[Claw-Empire](https://github.com/GreenSheep01201/claw-empire) transforms your OpenClaw swarm into a visual, virtual software company. Run our 1-click setup to get started:
+`agentsswarm/` is now the primary app in this repository. It is optimized for:
+
+- seamless Discord / Telegram / WhatsApp chat routing
+- compact hybrid execution (`#` creates a lightweight board task and runs immediately)
+- provider profiles and multi-Copilot usage
+- compact packs that stay under 8 agents
+- CLI-first operations instead of a heavy visual layer
+
+Root setup and start wrappers:
 
 **Windows PowerShell:**
+
 ```powershell
-.\setup_claw_empire.bat
+.\setup_agentsswarm.bat
+.\start_agentsswarm.bat
 ```
 
 **macOS / Linux:**
+
 ```bash
-./setup_claw_empire.sh
+./setup_agentsswarm.sh
+./start_agentsswarm.sh
 ```
 
-This will automatically clone the repo, install Node/pnpm dependencies, apply the **FTS: Fintech Startup** custom source overrides, rebuild the app, and securely register all 9 agents into isolated databases. 
+Built-in compact packs:
 
-Then launch the simulator UI with:
+- `software-6`: software delivery
+- `ops-5`: infra and automation
+- `research-5`: synthesis and analysis
+- `support-5`: multi-channel support
 
-**Windows:** `.\start_claw_empire.bat`
-**macOS/Linux:** `./start_claw_empire.sh`
+Built-in default provider profile set:
 
-### FTS: Fintech Startup — Autonomous Office Pack
+- `codex-main`
+- `copilot-review`
+- `claude-cli`
+- `gemini-cli`
+- `opencode-cli`
+- `openrouter-fallback`
 
-This pack ships a compact autonomous team across 3 departments:
+See [`agentsswarm/README.md`](agentsswarm/README.md) for full runtime details, commands, and the normalized chat payload contract.
 
-| Dept | Key | Agents |
-|---|---|---|
-| Planning & Architecture | `planning` | Orchestrator (Claude, TL) + Security Architect (Gemini, Sr) |
-| Core Engineering | `dev` | Sub1 Frontend (Codex, Sr), Sub2 Backend (Claude, Jr), Sub3 DevOps (Gemini, Jr), Data Engineer (Codex, Sr) |
-| Quality & Compliance | `qa` | Reviewer (Codex, TL), Test Automation (Claude, Sr), Compliance Auditor (Gemini, Jr) |
+Legacy note: the old visual office reference still exists in [`CLAW_EMPIRE_SETUP.md`](CLAW_EMPIRE_SETUP.md), but it is no longer the primary path for this repo.
 
-See [`templates/claw-empire-integration/FTS_USE_CASE.md`](templates/claw-empire-integration/FTS_USE_CASE.md) for the full architecture description.
+---
+
+## 📡 SwarmClaw Companion Dashboard
+
+[SwarmClaw](https://github.com/swarmclawai/swarmclaw) is the optional companion control plane. Add it when you need:
+
+- OpenClaw gateway profiles
+- connector inventory and routing visibility
+- multi-provider control plane management
+- task board / scheduler style operations
+
+Install with our wrappers:
+
+**Windows PowerShell:**
+
+```powershell
+.\setup_swarmclaw.bat
+```
+
+**macOS / Linux:**
+
+```bash
+./setup_swarmclaw.sh
+```
+
+Start it with:
+
+**Windows:** `.\start_swarmclaw.bat`
+**macOS/Linux:** `./start_swarmclaw.sh`
+
+Then open `http://127.0.0.1:3456` and complete first-run access key onboarding.
+
+Use docs:
+
+- [`SWARMCLAW_SETUP.md`](SWARMCLAW_SETUP.md)
+- [`SWARMCLAW_GUIDANCE.md`](SWARMCLAW_GUIDANCE.md)
 
 ---
 
@@ -294,11 +366,14 @@ Operational note: fastest setup is usually Telegram; WhatsApp needs QR pairing a
 
 ## Multi-Agent Setup Guides
 
+- **Primary runtime app:** [agentsswarm/README.md](agentsswarm/README.md)
 - **Initial setup + channels:** [OPENCLAW_SETUP.md](OPENCLAW_SETUP.md)
 - **Main step-by-step:** [MULTI_AGENT_SETUP.md](MULTI_AGENT_SETUP.md)
 - **Deployment guide:** [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)
-- **Claw-Empire office sim:** [CLAW_EMPIRE_SETUP.md](CLAW_EMPIRE_SETUP.md)
-- **FTS Pack details:** [templates/claw-empire-integration/FTS_USE_CASE.md](templates/claw-empire-integration/FTS_USE_CASE.md)
+- **SwarmClaw control plane:** [SWARMCLAW_SETUP.md](SWARMCLAW_SETUP.md)
+- **Platform decision guide:** [SWARMCLAW_GUIDANCE.md](SWARMCLAW_GUIDANCE.md)
+- **Legacy visual office reference:** [CLAW_EMPIRE_SETUP.md](CLAW_EMPIRE_SETUP.md)
+- **Legacy FTS pack details:** [templates/claw-empire-integration/FTS_USE_CASE.md](templates/claw-empire-integration/FTS_USE_CASE.md)
 - **Explore Use Cases:** [USECASES.md](USECASES.md)
 - **Team pattern reference:** [Multi-Agent Specialized Team](https://github.com/hesamsheikh/awesome-openclaw-usecases/blob/main/usecases/multi-agent-team.md)
 - **Content pipeline reference:** [Multi-Agent Content Factory](https://github.com/hesamsheikh/awesome-openclaw-usecases/blob/main/usecases/content-factory.md)
