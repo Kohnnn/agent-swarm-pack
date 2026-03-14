@@ -1,4 +1,4 @@
-name: JSON Validation
+name: Validate
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
 
 jobs:
-  validate:
+  json-validation:
     runs-on: ubuntu-latest
 
     steps:
@@ -24,3 +24,65 @@ jobs:
             fi
           done
           echo "All JSON files are valid."
+
+  agentsswarm:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agentsswarm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            agentsswarm/package-lock.json
+            agentsswarm/ui/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm ci
+
+      - name: Install UI dependencies
+        run: npm --prefix ui ci
+
+      - name: Static checks
+        run: npm run check
+
+      - name: Backend tests
+        run: npm test
+
+      - name: Frontend tests
+        run: npm run test:web
+
+      - name: Frontend build
+        run: npm run build:web
+
+      - name: Performance smoke gate
+        env:
+          BRIDGE_PORT: "7801"
+          BRIDGE_SECRET: "ci-bridge-secret"
+          TASK_EXECUTION_BACKEND: "standalone"
+          CONNECTOR_BACKEND: "none"
+        run: |
+          set -euo pipefail
+          npm run start > perf-server.log 2>&1 &
+          SERVER_PID=$!
+
+          cleanup() {
+            kill "$SERVER_PID" 2>/dev/null || true
+            wait "$SERVER_PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          for i in $(seq 1 80); do
+            if curl -fsS "http://127.0.0.1:${BRIDGE_PORT}/health" > /dev/null; then
+              break
+            fi
+            sleep 0.25
+          done
+
+          BRIDGE_URL="http://127.0.0.1:${BRIDGE_PORT}" npm run test:perf

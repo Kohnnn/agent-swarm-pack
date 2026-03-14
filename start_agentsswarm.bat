@@ -6,18 +6,16 @@ title AgentSwarm
 set "RUN_DEV=0"
 set "DO_UPDATE=0"
 set "RESYNC_ENV=0"
-set "WITH_SWARMCLAW=0"
-set "BRIDGE_ONLY=0"
 set "RUN_DOCTOR=0"
+set "FORCE_RESTART=0"
 
 :parse_args
 if "%~1"=="" goto args_done
 if /i "%~1"=="--dev" set "RUN_DEV=1"
 if /i "%~1"=="--update" set "DO_UPDATE=1"
 if /i "%~1"=="--resync-env" set "RESYNC_ENV=1"
-if /i "%~1"=="--with-swarmclaw" set "WITH_SWARMCLAW=1"
-if /i "%~1"=="--bridge-only" set "BRIDGE_ONLY=1"
 if /i "%~1"=="--doctor" set "RUN_DOCTOR=1"
+if /i "%~1"=="--restart" set "FORCE_RESTART=1"
 shift
 goto parse_args
 
@@ -36,7 +34,6 @@ if "%NEEDS_SETUP%"=="1" (
   set "SETUP_ARGS=--skip-tests"
   if "%DO_UPDATE%"=="1" set "SETUP_ARGS=!SETUP_ARGS! --update"
   if "%RESYNC_ENV%"=="1" set "SETUP_ARGS=!SETUP_ARGS! --resync-env"
-  if "%WITH_SWARMCLAW%"=="1" if not "%BRIDGE_ONLY%"=="1" set "SETUP_ARGS=!SETUP_ARGS! --with-swarmclaw"
   call "%~dp0setup_agentsswarm.bat" !SETUP_ARGS!
   if errorlevel 1 exit /b 1
 )
@@ -48,33 +45,47 @@ if errorlevel 1 (
 )
 
 if "%RESYNC_ENV%"=="1" (
-  call node "scripts\bootstrap-env.mjs" --strict --resync-env
+  call node "scripts\bootstrap-env.mjs" --startup --strict --resync-env
 ) else (
-  call node "scripts\bootstrap-env.mjs" --strict
+  call node "scripts\bootstrap-env.mjs" --startup --strict
 )
 if errorlevel 1 (
   echo [ERROR] Missing required AgentSwarm environment values.
   exit /b 1
 )
 
-call npm run preflight
+call npm run startup-check
 if errorlevel 1 (
-  echo [ERROR] AgentSwarm preflight failed. Fix the issues above, then retry.
+  echo [ERROR] AgentSwarm startup checks failed. Fix the blocking issues above, then retry.
   exit /b 1
 )
 
-if "%WITH_SWARMCLAW%"=="1" if not "%BRIDGE_ONLY%"=="1" (
-  call :ensure_swarmclaw_started
+set "EXECUTION_BACKEND=standalone"
+for /f "tokens=1,2 delims==" %%A in ('findstr /b /c:"EXECUTION_BACKEND=" ".env" 2^>nul') do set "EXECUTION_BACKEND=%%B"
+set "CONNECTOR_BACKEND=none"
+for /f "tokens=1,2 delims==" %%A in ('findstr /b /c:"CONNECTOR_BACKEND=" ".env" 2^>nul') do set "CONNECTOR_BACKEND=%%B"
+
+if /i "%EXECUTION_BACKEND%"=="remote_api" call :is_port_in_use 8790
+if /i "%EXECUTION_BACKEND%"=="remote_api" if errorlevel 1 (
+  echo [WARN] Remote execution API is not detected on port 8790.
+  echo [WARN] AgentSwarm will still start, but remote execution flows will fail until REMOTE_API_URL is reachable.
 )
 
 set "BRIDGE_PORT=7799"
 for /f "tokens=1,2 delims==" %%A in ('findstr /b /c:"BRIDGE_PORT=" ".env" 2^>nul') do set "BRIDGE_PORT=%%B"
-set "BRIDGE_PID="
-for /f "tokens=5" %%p in ('netstat -ano ^| findstr LISTENING ^| findstr /C:":%BRIDGE_PORT% "') do (
-  if not defined BRIDGE_PID set "BRIDGE_PID=%%p"
+set "UI_PORT=7800"
+for /f "tokens=1,2 delims==" %%A in ('findstr /b /c:"UI_PORT=" ".env" 2^>nul') do set "UI_PORT=%%B"
+call :find_port_pid !BRIDGE_PORT!
+if defined PORT_PID (
+  if "%FORCE_RESTART%"=="1" (
+    echo [INFO] Restart requested. Stopping existing AgentSwarm process !PORT_PID! ...
+    taskkill /PID !PORT_PID! /F >nul 2>&1
+    timeout /t 1 >nul
+    set "PORT_PID="
+  )
 )
-if defined BRIDGE_PID (
-  echo [INFO] AgentSwarm already listening on port !BRIDGE_PORT! ^(pid=!BRIDGE_PID!^).
+if defined PORT_PID (
+  echo [INFO] AgentSwarm already listening on port !BRIDGE_PORT! ^(pid=!PORT_PID!^).
   set "BRIDGE_URL=http://127.0.0.1:!BRIDGE_PORT!"
   if "%RUN_DOCTOR%"=="1" (
     call npm run cli -- doctor
@@ -91,13 +102,20 @@ if "%DO_UPDATE%"=="1" if "%NEEDS_SETUP%"=="0" (
 )
 
 if "%RUN_DOCTOR%"=="1" (
-  echo [INFO] Preflight passed. Doctor will be available after AgentSwarm is listening.
+  echo [INFO] Startup checks passed. Doctor will be available after AgentSwarm is listening.
 )
 
 echo ================================================
 echo   AgentSwarm starting
+echo   Service: secure local control plane with browser dashboard
+echo   Execution Backend: !EXECUTION_BACKEND!
+echo   Connector Backend: !CONNECTOR_BACKEND!
+echo   Dashboard: http://127.0.0.1:!BRIDGE_PORT!/
+echo   SPA UI:  http://127.0.0.1:!UI_PORT!/dashboard ^(run: npm run dev:web^)
 echo   Health:  http://127.0.0.1:!BRIDGE_PORT!/health
+echo   Tasks:   http://127.0.0.1:!BRIDGE_PORT!/tasks
 echo   Routes:  set BRIDGE_URL=http://127.0.0.1:!BRIDGE_PORT! ^&^& npm run cli -- routes
+echo   Resolve: set BRIDGE_URL=http://127.0.0.1:!BRIDGE_PORT! ^&^& npm run cli -- resolve-route --channel engineering
 echo   Summary: set BRIDGE_URL=http://127.0.0.1:!BRIDGE_PORT! ^&^& npm run cli -- summary
 echo ================================================
 
@@ -110,17 +128,14 @@ if "%RUN_DEV%"=="1" (
 endlocal
 exit /b 0
 
-:ensure_swarmclaw_started
-for %%p in (3456 3460 3470) do (
-  for /f "tokens=5" %%x in ('netstat -ano ^| findstr LISTENING ^| findstr /C:":%%p "') do (
-    echo [INFO] SwarmClaw already appears to be running on port %%p.
-    exit /b 0
-  )
-)
-if exist "%~dp0start_swarmclaw.bat" (
-  echo [INFO] Starting SwarmClaw in a separate window...
-  start "SwarmClaw" cmd /c call "%~dp0start_swarmclaw.bat"
-) else (
-  echo [WARN] start_swarmclaw.bat not found; skipping SwarmClaw auto-start.
+:find_port_pid
+set "PORT_PID="
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr LISTENING ^| findstr /C:":%~1 "') do (
+  if not defined PORT_PID set "PORT_PID=%%p"
 )
 exit /b 0
+
+:is_port_in_use
+call :find_port_pid %~1
+if defined PORT_PID exit /b 0
+exit /b 1
