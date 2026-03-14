@@ -70,7 +70,7 @@ There is no dedicated `openclaw agents set-soul` command. The supported pattern 
 1. Use `openclaw agents list --json` to find each agent workspace.
 2. Edit each workspace `SOUL.md` file directly.
 
-*(Note: When you need to cleanly reset or remove an agent's identity and soul, you will fully delete the agent, which handles pruning these injected files. See Step 9).*
+_(Note: When you need to cleanly reset or remove an agent's identity and soul, you will fully delete the agent, which handles pruning these injected files. See Step 9)._
 
 ### Recommended injection workflow (template-based)
 
@@ -142,6 +142,7 @@ Rather than running 30+ manual commands, use the bundled setup script to automat
 ```
 
 This script will:
+
 1. `openclaw agents add` for all 9 agents.
 2. Inject the shared `USER.md` rules.
 3. Inject the role-specific `SOUL.md`, `AGENTS.md`, `IDENTITY.md`, and `TOOLS.md`.
@@ -149,6 +150,7 @@ This script will:
 
 Use `templates/samples/openclaw.discord.swarm.sample.json5` as your routing base
 and `templates/samples/PROMPTS.md` for role prompt starters.
+
 ---
 
 ## Step 5: Per-agent model/provider customization via CLI + config
@@ -226,6 +228,7 @@ openclaw config set session.dmScope '"per-channel-peer"'
 ```
 
 **Enable Discord Plugin:**
+
 ```bash
 openclaw config set plugins.entries.discord.enabled true
 openclaw config set channels.discord.enabled true
@@ -262,9 +265,9 @@ Use `config.apply` for full config replace when you have a controlled payload.
 
 ## Step 7: Connect and manage multiple messaging accounts (Discord Swarm)
 
-For the Discord swarm workflow, you can either configure it continuously via `openclaw.json` as shown in Step 5, or register an explicit Discord account connection. 
+For the Discord swarm workflow, you can either configure it continuously via `openclaw.json` as shown in Step 5, or register an explicit Discord account connection.
 
-*(OpenClaw supports running multiple Discord bots. If relying solely on one token for the channel, it operates as the "default" account).*
+_(OpenClaw supports running multiple Discord bots. If relying solely on one token for the channel, it operates as the "default" account)._
 
 ### Bind the Swarm Agents to Discord
 
@@ -296,7 +299,7 @@ Binding rules that matter:
 
 ## Step 8: Finalize swarm routing in `openclaw.json`
 
-For advanced Discord isolation, you might want specific sub-agents to only reply in certain Discord guild text channels (or specific roles). 
+For advanced Discord isolation, you might want specific sub-agents to only reply in certain Discord guild text channels (or specific roles).
 
 Use explicit multi-agent routing inside `openclaw.json`'s `bindings` array:
 
@@ -312,15 +315,15 @@ Use explicit multi-agent routing inside `openclaw.json`'s `bindings` array:
     },
     {
       "agentId": "orchestrator",
-      "match": { 
-        "channel": "discord", 
-        "guildId": "1477565489772232734" 
+      "match": {
+        "channel": "discord",
+        "guildId": "1477565489772232734"
       }
     },
     {
       "agentId": "review",
-      "match": { 
-        "channel": "discord", 
+      "match": {
+        "channel": "discord",
         "guildId": "1477565489772232734",
         "peer": { "kind": "channel", "id": "1477565489772232736" }
       }
@@ -329,7 +332,7 @@ Use explicit multi-agent routing inside `openclaw.json`'s `bindings` array:
 }
 ```
 
-*Note: The exact `guildId` and channel `id` should match your Discord server. Peer matches and guild inheritance determine which agent replies to a message.*
+_Note: The exact `guildId` and channel `id` should match your Discord server. Peer matches and guild inheritance determine which agent replies to a message._
 
 Validate and restart if needed:
 
@@ -357,8 +360,8 @@ openclaw agents unbind --agent build3 --all
 openclaw agents bindings --agent build3 --json
 ```
 
-3. Delete the agent and prune state/workspace. 
-This command handles the cleanup of the agent's identity, injected `SOUL.md`, `AGENTS.md`, and local state configurations linked to it.
+3. Delete the agent and prune state/workspace.
+   This command handles the cleanup of the agent's identity, injected `SOUL.md`, `AGENTS.md`, and local state configurations linked to it.
 
 ```bash
 openclaw agents delete build3
@@ -441,6 +444,7 @@ For orchestrator fan-out, use sub-agents:
 
 Now that your swarm is created, what's next?
 
-1. **Routing and Architecture:** Read [`DEPLOYMENT_GUIDE.md`](DEPLOYMENT_GUIDE.md) to understand how to operate this swarm.
-2. **Deep Dive configurations:** See [`MULTI_AGENT_ADVANCED.md`](MULTI_AGENT_ADVANCED.md) to wire specific Discord channels to specific agents (e.g. wire Sub1 to `#frontend`).
-3. **The Visual Simulator:** Use [`CLAW_EMPIRE_SETUP.md`](CLAW_EMPIRE_SETUP.md) to drop your CLI agents into an interactive virtual office.
+1. **Primary runtime:** Use [`agentsswarm/README.md`](agentsswarm/README.md) to run the compact local app with hybrid `$` and `#` orchestration.
+2. **Routing and Architecture:** Read [`DEPLOYMENT_GUIDE.md`](DEPLOYMENT_GUIDE.md) to understand how to operate this swarm.
+3. **Deep Dive configurations:** See [`MULTI_AGENT_ADVANCED.md`](MULTI_AGENT_ADVANCED.md) to wire specific Discord channels to specific agents (e.g. wire Sub1 to `#frontend`).
+4. **The Control Plane:** Use [`SWARMCLAW_SETUP.md`](SWARMCLAW_SETUP.md) to add a dashboard-first orchestration layer when needed.

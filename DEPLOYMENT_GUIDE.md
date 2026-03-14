@@ -10,8 +10,10 @@ ops patterns and validation.
 
 By the end, you will have:
 
+- A compact AgentSwarm app for chat-first hybrid execution.
 - Multiple isolated agents (separate workspace + sessions + identity).
 - Deterministic channel routing via `bindings`.
+- Provider-aware execution paths you can map to compact packs and roles.
 - Optional sub-agent parallelization for burst workloads.
 - A practical ops loop for health checks and CI-style quality gates.
 
@@ -32,6 +34,20 @@ Recommended platform notes from docs:
 - Node 22+ runtime.
 - Bun is not recommended for Gateway runtime.
 - Windows users are best on WSL2 for host setup.
+
+If you want the fastest end-to-end local runtime, set up AgentSwarm from this repo root after OpenClaw is healthy:
+
+```bash
+./setup_agentsswarm.sh --install-openclaw --install-provider-clis
+./start_agentsswarm.sh --doctor
+```
+
+Windows PowerShell:
+
+```powershell
+.\setup_agentsswarm.bat --install-openclaw --install-provider-clis
+.\start_agentsswarm.bat --doctor
+```
 
 ---
 
@@ -226,17 +242,22 @@ Operational pattern that works well:
 
 ## 🧠 Step 7: Recommended Team Patterns
 
-### 🏦 FTS: Fintech Startup Pack (Recommended)
+### 🤖 AgentSwarm Compact Packs (Recommended)
 
-This is the default pack shipped with the `setup_claw_empire` installer script. A compact 9-agent autonomous team covering all lifecycle stages:
+The recommended default path in this repo is the compact AgentSwarm app with packs that stay below the 8-agent cap:
 
-| Dept | Agents |
-|---|---|
-| Planning & Architecture | Orchestrator (TL, Claude), Security Architect (Sr, Gemini) |
-| Core Engineering | Sub1 Frontend (Sr, Codex), Sub2 Backend (Jr, Claude), Sub3 DevOps (Jr, Gemini), Data Engineer (Sr, Codex) |
-| Quality & Compliance | Reviewer (TL, Codex), Test Automation (Sr, Claude), Compliance Auditor (Jr, Gemini) |
+| Pack         | Best For                                | Size |
+| ------------ | --------------------------------------- | ---- |
+| `software-6` | software delivery, review, deploy loops | 6    |
+| `ops-5`      | infra, automations, incident handling   | 5    |
+| `research-5` | synthesis, reports, market scans        | 5    |
+| `support-5`  | multi-channel support and triage        | 5    |
 
-See [`CLAW_EMPIRE_SETUP.md`](CLAW_EMPIRE_SETUP.md) for the visual office setup and CEO directive workflows.
+See [`agentsswarm/README.md`](agentsswarm/README.md) for the runtime, CLI, provider profiles, and chat channel contract.
+
+If you need a dashboard/control-plane on top, add [`SWARMCLAW_SETUP.md`](SWARMCLAW_SETUP.md) and follow [`SWARMCLAW_GUIDANCE.md`](SWARMCLAW_GUIDANCE.md).
+
+Legacy note: the older FTS office pack still exists as reference material in [`templates/claw-empire-integration/FTS_USE_CASE.md`](templates/claw-empire-integration/FTS_USE_CASE.md).
 
 ### 👤 Solo Founder Pattern
 
@@ -264,7 +285,10 @@ Start with different model defaults per role, then tune by cost/latency.
 ## 🔀 Next Steps
 
 Your multi-agent platform is built!
+
 - Check out [`USECASES.md`](USECASES.md) for concrete examples of how your agents can run your business logic.
+- Use [`agentsswarm/README.md`](agentsswarm/README.md) as the primary runtime guide for chat-first execution.
+- Add [`SWARMCLAW_SETUP.md`](SWARMCLAW_SETUP.md) if you want dashboard-first operations on top of your existing OpenClaw swarm.
 
 ---
 
