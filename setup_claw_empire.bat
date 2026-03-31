@@ -1,284 +1,142 @@
 @echo off
 setlocal EnableDelayedExpansion
 chcp 65001 >nul 2>&1
-title Claw-Empire Setup
+title Claw Empire Setup
 
-:: ============================================================
-::  Claw-Empire 1-Click Setup for OpenClaw Discord Swarm
-::  Target OS  : Windows 10/11
-::  Repository : https://github.com/GreenSheep01201/claw-empire
-:: ============================================================
+set "DO_UPDATE=0"
+set "RESYNC_ENV=0"
+set "SKIP_TESTS=0"
 
+:parse_args
+if "%~1"=="" goto args_done
+if /i "%~1"=="--update"     set "DO_UPDATE=1"
+if /i "%~1"=="--resync-env" set "RESYNC_ENV=1"
+if /i "%~1"=="--skip-tests" set "SKIP_TESTS=1"
+shift
+goto parse_args
+
+:args_done
+set "ROOT_DIR=%~dp0"
+set "PROJECT_DIR=%ROOT_DIR%claw-empire"
+set "REQUIRED_NODE=22"
+
+:: ─── Banner ──────────────────────────────────────────────────────────────────
 echo.
-echo ========================================================
-echo    Claw-Empire  -  1-Click Setup Script
-echo    OpenClaw Discord Swarm Edition
-echo ========================================================
+echo   [94m╔═══════════════════════════════════════════════════════════╗[0m
+echo   [94m║[0m  [96mClaw Empire Setup[0m  [37m^|[0m  AgentsSwarm Empire Installer     [94m║[0m
+echo   [94m╚═══════════════════════════════════════════════════════════╝[0m
 echo.
 
-:: ============================================================
-:: 1. PREREQUISITE CHECKS
-:: ============================================================
-echo [1/4] Checking prerequisites...
-echo.
+:: ─── Directory Guard ─────────────────────────────────────────────────────────
+if not exist "!PROJECT_DIR!" (
+  echo [ERROR] claw-empire directory not found at: !PROJECT_DIR!
+  echo [INFO]  Run: git clone https://github.com/GreenSheep01201/claw-empire claw-empire
+  exit /b 1
+)
 
-:: -- Check Node.js --
+:: ─── [1/6] Prerequisite: Node.js ─────────────────────────────────────────────
+echo [1/6] Checking Node.js runtime...
 where node >nul 2>&1
-if !ERRORLEVEL! neq 0 (
-    echo [ERROR] Node.js is not installed or not in PATH.
-    echo         Please install Node.js v22+ from https://nodejs.org/
-    goto :fail
+if errorlevel 1 (
+  echo [ERROR] Node.js is not installed or not in PATH.
+  echo [INFO]  Download: https://nodejs.org/
+  exit /b 1
 )
-
-:: Capture Node version and verify v22+
-for /f "tokens=1 delims=." %%v in ('node -v 2^>nul') do set "NODE_VER_RAW=%%v"
-set "NODE_VER=!NODE_VER_RAW:v=!"
-if !NODE_VER! LSS 22 (
-    echo [ERROR] Node.js v22+ is required. Detected: v!NODE_VER!.
-    echo         Please upgrade from https://nodejs.org/
-    goto :fail
+for /f "tokens=1 delims=." %%v in ('node -v') do set "NODE_MAJOR_RAW=%%v"
+set "NODE_MAJOR=!NODE_MAJOR_RAW:v=!"
+if !NODE_MAJOR! LSS !REQUIRED_NODE! (
+  echo [ERROR] Node.js v!REQUIRED_NODE!+ required. Detected: v!NODE_MAJOR!.
+  exit /b 1
 )
-echo   [OK] Node.js v!NODE_VER! detected
+echo [OK]   Node.js v!NODE_MAJOR! detected.
 
-:: -- Check Git --
-where git >nul 2>&1
-if !ERRORLEVEL! neq 0 (
-    echo [ERROR] Git is not installed or not in PATH.
-    echo         Please install Git from https://git-scm.com/
-    goto :fail
-)
-for /f "tokens=3" %%g in ('git --version 2^>nul') do set "GIT_VER=%%g"
-echo   [OK] Git !GIT_VER! detected
-
-:: -- Find a working pnpm binary (bypass corepack shim which has signature verification issues) --
-echo.
-set "PNPM_CMD="
-
-:: Strategy 1: Check standalone pnpm install (most reliable)
-if exist "%LOCALAPPDATA%\pnpm\pnpm.exe" (
-    set "PNPM_CMD=%LOCALAPPDATA%\pnpm\pnpm.exe"
-    echo   [OK] pnpm found at standalone install
-    goto :pnpm_found
-)
-
-:: Strategy 2: Check npm global install
-for /f "delims=" %%p in ('npm root -g 2^>nul') do (
-    if exist "%%p\..\pnpm.cmd" (
-        set "PNPM_CMD=%%p\..\pnpm.cmd"
-        echo   [OK] pnpm found at npm global
-        goto :pnpm_found
-    )
-)
-
-:: Strategy 3: Try corepack enable as last resort
-echo   pnpm not found. Attempting corepack enable...
-corepack enable >nul 2>&1
+:: ─── [2/6] Prerequisite: pnpm ────────────────────────────────────────────────
+echo [2/6] Checking pnpm...
 where pnpm >nul 2>&1
-if !ERRORLEVEL! equ 0 (
-    set "PNPM_CMD=pnpm"
-    echo   [OK] pnpm enabled via corepack
-    goto :pnpm_found
+if errorlevel 1 (
+  echo [WARN] pnpm not found. Installing globally...
+  call npm install -g pnpm
+  if errorlevel 1 (
+    echo [ERROR] Could not install pnpm. Resolve manually: npm install -g pnpm
+    exit /b 1
+  )
 )
+for /f %%v in ('pnpm -v') do echo [OK]   pnpm %%v detected.
 
-echo [ERROR] pnpm is not available. Install it with:
-echo           npm install -g pnpm
-echo        Or download from https://pnpm.io/installation
-goto :fail
-
-:pnpm_found
-echo.
-
-:: ============================================================
-:: 2. CLONE & INSTALL
-:: ============================================================
-echo [2/4] Cloning and installing claw-empire...
-echo.
-
-:: Clone or pull (skip clone if directory already exists)
-if exist "claw-empire" (
-    echo   [INFO] Directory "claw-empire" already exists.
-    set "CLAW_EMPIRE_EXISTS=1"
+:: ─── [3/6] Environment Bootstrap ────────────────────────────────────────────
+echo [3/6] Bootstrapping environment...
+echo [INFO] Note: Claw Empire uses Node.js --experimental-sqlite (no SQLite CLI needed).
+if "!RESYNC_ENV!"=="1" (
+  if exist "!PROJECT_DIR!\.env.example" (
+    copy /y "!PROJECT_DIR!\.env.example" "!PROJECT_DIR!\.env" >nul
+    echo [OK]   .env force-resynced from .env.example.
+  ) else (
+    echo [WARN] No .env.example found — skipping resync.
+  )
+) else if not exist "!PROJECT_DIR!\.env" (
+  if exist "!PROJECT_DIR!\.env.example" (
+    copy /y "!PROJECT_DIR!\.env.example" "!PROJECT_DIR!\.env" >nul
+    echo [OK]   Created .env from .env.example.
+    echo [INFO] Generating secure random secret...
+    powershell -NoProfile -Command ^
+      "$s=[Convert]::ToBase64String((1..32|%%{[byte](Get-Random -Maximum 255)}));" ^
+      "(Get-Content '!PROJECT_DIR!\.env') -replace 'CHANGE_ME',$s | Set-Content '!PROJECT_DIR!\.env'" >nul 2>&1
+    echo [OK]   Secrets generated.
+  ) else (
+    echo [WARN] No .env.example found. Create !PROJECT_DIR!\.env manually.
+  )
 ) else (
-    echo   Cloning repository https://github.com/GreenSheep01201/claw-empire ...
-    git clone https://github.com/GreenSheep01201/claw-empire.git
-    if !ERRORLEVEL! neq 0 (
-        echo [ERROR] git clone failed. Check your network and the URL.
-        goto :fail
-    )
-    echo   [OK] Repository cloned
-    set "CLAW_EMPIRE_EXISTS=0"
+  echo [OK]   .env already exists. Use --resync-env to overwrite.
 )
 
-:: Enter the directory
-pushd claw-empire
-if !ERRORLEVEL! neq 0 (
-    echo [ERROR] Could not enter claw-empire directory.
-    goto :fail
+:: ─── [4/6] Dependencies ──────────────────────────────────────────────────────
+echo [4/6] Installing dependencies...
+cd /d "!PROJECT_DIR!"
+if errorlevel 1 (
+  echo [ERROR] Could not enter !PROJECT_DIR!
+  exit /b 1
 )
-
-if "!CLAW_EMPIRE_EXISTS!"=="1" (
-    echo   [UPDATE] Checking for updates from remote repository...
-    git pull
-    if !ERRORLEVEL! neq 0 (
-        echo   [WARN] Could not pull latest changes. Continuing with existing files.
-    ) else (
-        echo   [OK] Repository updated
-    )
+call pnpm install
+if errorlevel 1 (
+  echo [ERROR] pnpm install failed. Resolve errors above and retry.
+  exit /b 1
 )
+echo [OK]   Dependencies installed.
 
-:: Init submodules
-echo   Initializing submodules...
-git submodule update --init --recursive
-if !ERRORLEVEL! neq 0 (
-    echo   [WARN] Submodule update returned a warning - may be non-critical.
-)
-echo   [OK] Submodules initialized
-
-:: Install dependencies
-echo.
-echo   Installing dependencies...
-call "!PNPM_CMD!" install
-if !ERRORLEVEL! neq 0 (
-    echo [ERROR] pnpm install failed. Please check the logs above.
-    popd
-    goto :fail
-)
-
-
-echo   [OK] Dependencies installed
-
-:: --- FTS Custom Integration Step ---
-echo   Applying FTS Office Pack custom integration...
-xcopy /s /y /q "..\templates\claw-empire-integration\src" "src" 2^>nul
-xcopy /s /y /q "..\templates\claw-empire-integration\server" "server" 2^>nul
-echo   [OK] Applied custom FTS source code
-
-echo   Building with custom FTS integration...
-call "!PNPM_CMD!" run build
-echo   [OK] Build complete
-
-echo   Registering FTS agents...
-node --experimental-sqlite "..\templates\claw-empire-integration\register_agents.js"
-echo   [OK] Agents registered
-:: -----------------------------------
-
-echo.
-
-:: ============================================================
-:: 3. ENVIRONMENT CONFIGURATION
-:: ============================================================
-echo [3/4] Configuring environment variables...
-echo.
-
-:: Ensure .env exists
-if not exist ".env" (
-    if exist ".env.example" (
-        copy .env.example .env >nul
-        echo   [OK] Created .env from .env.example
-    ) else (
-        echo   Creating minimal .env ...
-        (
-            echo # Claw-Empire environment configuration
-            echo OAUTH_ENCRYPTION_SECRET=
-            echo INBOX_WEBHOOK_SECRET=
-            echo OPENCLAW_CONFIG=
-            echo PORT=8790
-            echo HOST=127.0.0.1
-        ) > .env
-        echo   [OK] Created minimal .env
-    )
+:: ─── [5/6] Update ────────────────────────────────────────────────────────────
+if "!DO_UPDATE!"=="1" (
+  echo [5/6] Updating dependencies...
+  call pnpm update
+  if errorlevel 1 echo [WARN] pnpm update failed. Continuing with installed versions.
+  echo [OK]   Dependencies up to date.
 ) else (
-    echo   [OK] .env already exists
+  echo [5/6] Skipping dependency update. Use --update to pull latest.
 )
 
-:: ---- Inject / update OPENCLAW_CONFIG ----
-set "OPENCLAW_PATH=C:\Users\Admin\.openclaw\openclaw.json"
-
-findstr /B /C:"OPENCLAW_CONFIG=" .env >nul 2>&1
-if !ERRORLEVEL! equ 0 (
-    :: Replace existing line
-    powershell -NoProfile -Command "(Get-Content .env) -replace '^OPENCLAW_CONFIG=.*', 'OPENCLAW_CONFIG=C:\Users\Admin\.openclaw\openclaw.json' | Set-Content .env"
-    echo   [OK] Updated OPENCLAW_CONFIG in .env
+:: ─── [6/6] Validation ────────────────────────────────────────────────────────
+if "!SKIP_TESTS!"=="0" (
+  echo [6/6] Running tests (with --experimental-sqlite)...
+  set "NODE_OPTIONS=--experimental-sqlite"
+  call pnpm test
+  if errorlevel 1 (
+    echo [WARN] Some tests failed. Resolve before production use.
+  ) else (
+    echo [OK]   All tests passed.
+  )
 ) else (
-    :: Append
-    >>".env" echo OPENCLAW_CONFIG=!OPENCLAW_PATH!
-    echo   [OK] Added OPENCLAW_CONFIG to .env
+  echo [6/6] Skipping tests. Run setup without --skip-tests for full verification.
 )
 
-:: ---- Inject / update INBOX_WEBHOOK_SECRET (if empty or missing) ----
-:: Generate a 32-byte hex random secret
-for /f "delims=" %%s in ('powershell -NoProfile -Command "[guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')"') do set "RANDOM_SECRET=%%s"
-
-:: Check if INBOX_WEBHOOK_SECRET is present and has a value
-set "SECRET_SET=0"
-for /f "usebackq tokens=1,* delims==" %%a in (".env") do (
-    if "%%a"=="INBOX_WEBHOOK_SECRET" (
-        if not "%%b"=="" set "SECRET_SET=1"
-    )
-)
-
-if "!SECRET_SET!"=="0" (
-    :: Check if the key line exists at all
-    findstr /B /C:"INBOX_WEBHOOK_SECRET=" .env >nul 2>&1
-    if !ERRORLEVEL! equ 0 (
-        :: Key exists but empty - replace
-        powershell -NoProfile -Command "(Get-Content .env) -replace '^INBOX_WEBHOOK_SECRET=.*', 'INBOX_WEBHOOK_SECRET=!RANDOM_SECRET!' | Set-Content .env"
-    ) else (
-        :: Key doesn't exist - append
-        >>".env" echo INBOX_WEBHOOK_SECRET=!RANDOM_SECRET!
-    )
-    echo   [OK] Generated secure INBOX_WEBHOOK_SECRET
-) else (
-    echo   [OK] INBOX_WEBHOOK_SECRET already configured
-)
-
+:: ─── Summary ─────────────────────────────────────────────────────────────────
 echo.
-
-:: ============================================================
-:: 4. FINALIZATION
-:: ============================================================
-echo [4/4] Finalizing...
+echo   [90m─────────────────────────────────────────────────────────────[0m
+echo   [92m  Claw Empire setup complete![0m
+echo   [90m  Next steps:[0m
+echo   [90m    1. Edit [0m!PROJECT_DIR!\.env[90m — configure AI provider keys[0m
+echo   [90m    2. Run: [0mstart_claw-empire.bat
+echo   [90m    3. Run: [0mstart_claw-empire.bat --doctor[90m   (pre-flight check)[0m
+echo   [90m  Note: SQLite is built-in (NODE_OPTIONS=--experimental-sqlite)[0m
+echo   [90m─────────────────────────────────────────────────────────────[0m
 echo.
-
-:: Verify critical config
-echo   Verifying configuration:
-echo   ---
-findstr /B /C:"OPENCLAW_CONFIG=" .env
-findstr /B /C:"INBOX_WEBHOOK_SECRET=" .env
-echo   ---
-echo.
-
-echo ========================================================
-echo    Setup complete!
-echo ========================================================
-echo.
-echo   OPTION 1 - Use the launcher (recommended):
-echo     Double-click start_claw_empire.bat  (in this folder)
-echo.
-echo   OPTION 2 - Manual start from claw-empire directory:
-echo     set NODE_OPTIONS=--experimental-sqlite
-echo     %LOCALAPPDATA%\pnpm\pnpm.exe dev:local
-echo.
-echo   Then open:  http://127.0.0.1:8800  in your browser
-echo.
-echo   Quick health check (from another terminal):
-echo     curl -s http://127.0.0.1:8790/healthz
-echo.
-echo   Your OpenClaw config:  !OPENCLAW_PATH!
-echo.
-echo   Happy building with your AI agent swarm!
-echo.
-
-popd
-goto :end
-
-:fail
-echo.
-echo ========================================================
-echo    Setup failed. Please fix the errors above.
-echo ========================================================
-echo.
-
-:end
 endlocal
-pause
+exit /b 0

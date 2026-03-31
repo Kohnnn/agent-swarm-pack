@@ -1,114 +1,141 @@
 #!/usr/bin/env bash
 
 # ============================================================
-#  SwarmClaw 1-Click Setup for OpenClaw Agent Swarm
-#  Target OS  : macOS / Linux
-#  Repository : https://github.com/swarmclawai/swarmclaw
+#  SwarmClaw 1-Click Setup for AI Agent Orchestration
+#  Target OS  : macOS / Linux / WSL
+#  Repository : https://github.com/swarmclawai/swarmclaw.git
 # ============================================================
 
 set -e
 
-echo ""
-echo "========================================================"
-echo "   SwarmClaw  -  1-Click Setup Script"
-echo "   OpenClaw Agent Swarm Control Plane"
-echo "========================================================"
-echo ""
+# Colors
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
 
-echo "[1/4] Checking prerequisites..."
-echo ""
+DO_UPDATE=0
+SKIP_TESTS=0
 
+# Parse arguments
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --update) DO_UPDATE=1 ;;
+        --skip-tests) SKIP_TESTS=1 ;;
+        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+    esac
+    shift
+done
+
+echo -e "\n${BLUE}========================================================${NC}"
+echo -e "${BLUE}   SwarmClaw  -  1-Click Setup Script${NC}"
+echo -e "${BLUE}   AI Agent Orchestration Dashboard${NC}"
+echo -e "${BLUE}========================================================${NC}\n"
+
+# ============================================================
+# 1. PREREQUISITE CHECKS
+# ============================================================
+echo -e "[1/5] Checking prerequisites..."
+
+# Check Node.js
 if ! command -v node >/dev/null 2>&1; then
-    echo "[ERROR] Node.js is not installed or not in PATH."
-    echo "        Please install Node.js v22.6+ from https://nodejs.org/"
+    echo -e "${RED}[ERROR] Node.js is not installed.${NC}"
     exit 1
 fi
 
 NODE_VER=$(node -v | sed 's/v//' | cut -d'.' -f1)
 if [ "$NODE_VER" -lt 22 ]; then
-    echo "[ERROR] Node.js v22.6+ is required. Detected: v$NODE_VER."
+    echo -e "${RED}[ERROR] Node.js v22+ is required. Detected: v$NODE_VER${NC}"
     exit 1
 fi
-echo "  [OK] Node.js v$NODE_VER detected"
+echo -e "  [OK] Node.js v$(node -v) detected"
 
+# Check Git
 if ! command -v git >/dev/null 2>&1; then
-    echo "[ERROR] Git is not installed or not in PATH."
-    echo "        Please install Git from https://git-scm.com/"
+    echo -e "${RED}[ERROR] Git is not installed.${NC}"
     exit 1
 fi
-echo "  [OK] Git detected"
-
-if ! command -v npm >/dev/null 2>&1; then
-    echo "[ERROR] npm is not installed or not in PATH."
-    echo "        Please install Node.js + npm from https://nodejs.org/"
-    exit 1
-fi
-echo "  [OK] npm detected"
+echo -e "  [OK] Git $(git --version | awk '{print $3}') detected"
 echo ""
 
-echo "[2/4] Cloning and installing swarmclaw..."
-echo ""
+# ============================================================
+# 2. CLONE & INSTALL
+# ============================================================
+echo -e "[2/5] Cloning and installing SwarmClaw..."
 
 if [ -d "swarmclaw" ]; then
-    echo "  [INFO] Directory 'swarmclaw' already exists."
-    SWARMCLAW_EXISTS=1
+    echo -e "  [INFO] Directory 'swarmclaw' already exists."
 else
-    echo "  Cloning repository https://github.com/swarmclawai/swarmclaw ..."
+    echo -e "  Cloning repository https://github.com/swarmclawai/swarmclaw.git ..."
     git clone https://github.com/swarmclawai/swarmclaw.git
-    echo "  [OK] Repository cloned"
-    SWARMCLAW_EXISTS=0
+    echo -e "  [OK] Repository cloned"
 fi
 
 cd swarmclaw
 
-if [ "$SWARMCLAW_EXISTS" -eq 1 ]; then
-    echo "  [UPDATE] Checking for updates from remote repository..."
-    if ! git pull; then
-        echo "  [WARN] Could not pull latest changes. Continuing with existing files."
+# Always pull latest update
+echo -e "  [UPDATE] Pulling latest changes from remote..."
+if ! git pull; then
+    echo -e "  ${YELLOW}[WARN] Could not pull latest changes. Continuing with existing files.${NC}"
+else
+    echo -e "  [OK] Repository up to date"
+fi
+
+# Install dependencies
+echo -e "\n  Installing dependencies..."
+npm install
+echo -e "  [OK] Dependencies installed"
+echo ""
+
+# ============================================================
+# 3. ENVIRONMENT CONFIGURATION
+# ============================================================
+echo -e "[3/5] Configuring environment variables..."
+
+if [ ! -f ".env" ]; then
+    if [ -f ".env.example" ]; then
+        cp .env.example .env
+        echo -e "  [OK] Created .env from .env.example"
     else
-        echo "  [OK] Repository updated"
+        echo -e "  [WARN] .env.example not found. Creating minimal .env..."
+        cat <<EOF > .env
+PORT=3456
+NODE_ENV=development
+EOF
+        echo -e "  [OK] Created minimal .env"
+    fi
+else
+    echo -e "  [OK] .env already exists"
+fi
+echo ""
+
+# ============================================================
+# 4. VERIFICATION
+# ============================================================
+echo -e "[4/5] Running verification..."
+
+if [ "$SKIP_TESTS" -eq 1 ]; then
+    echo -e "  [INFO] Skipping tests."
+else
+    if npm run check >/dev/null 2>&1; then
+        echo -e "  [OK] Basic checks passed"
+    else
+        echo -e "  ${YELLOW}[WARN] Health check returned warnings.${NC}"
     fi
 fi
-
-echo "  Installing dependencies..."
-npm install
-echo "  [OK] Dependencies installed"
-
-echo "  Bootstrapping local runtime files..."
-npm run setup:easy -- --skip-install
-echo "  [OK] Local runtime prepared"
 echo ""
 
-echo "[3/4] Validating local config..."
-echo ""
+# ============================================================
+# 5. FINALIZATION
+# ============================================================
+echo -e "[5/5] Finalizing..."
 
-if [ -f ".env.local" ]; then
-    echo "  [OK] .env.local found"
-else
-    echo "  [WARN] .env.local not found yet. It will be generated on first run."
-fi
-
-if [ -d "data" ]; then
-    echo "  [OK] data directory found"
-else
-    echo "  [WARN] data directory not found yet. It will be created on first run."
-fi
+echo -e "\n${GREEN}========================================================${NC}"
+echo -e "${GREEN}   Setup complete!${NC}"
+echo -e "${GREEN}========================================================${NC}\n"
+echo -e "  To launch SwarmClaw:"
+echo -e "    ./start_swarmclaw.sh (in the root folder)"
 echo ""
-
-echo "[4/4] Finalizing..."
-echo ""
-echo "========================================================"
-echo "   Setup complete!"
-echo "========================================================"
-echo ""
-echo "  OPTION 1 - Use the launcher (recommended):"
-echo "    ./start_swarmclaw.sh"
-echo ""
-echo "  OPTION 2 - Manual start from swarmclaw directory:"
-echo "    npm run dev"
-echo ""
-echo "  Then open:  http://127.0.0.1:3456  in your browser"
-echo ""
-echo "  First run prints ACCESS KEY in terminal."
-echo "  Save it in your password manager before closing terminal."
-echo ""
+echo -e "  Then open: http://127.0.0.1:3456 in your browser\n"

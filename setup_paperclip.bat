@@ -3,138 +3,137 @@ setlocal EnableDelayedExpansion
 chcp 65001 >nul 2>&1
 title Paperclip Setup
 
-:: ============================================================
-::  Paperclip 1-Click Setup for OpenClaw Agent Swarm
-::  Target OS  : Windows 10/11
-::  Repository : https://github.com/paperclipai/paperclip
-:: ============================================================
+set "DO_UPDATE=0"
+set "RESYNC_ENV=0"
+set "SKIP_TESTS=0"
 
+:parse_args
+if "%~1"=="" goto args_done
+if /i "%~1"=="--update"     set "DO_UPDATE=1"
+if /i "%~1"=="--resync-env" set "RESYNC_ENV=1"
+if /i "%~1"=="--skip-tests" set "SKIP_TESTS=1"
+shift
+goto parse_args
+
+:args_done
+set "ROOT_DIR=%~dp0"
+set "PROJECT_DIR=%ROOT_DIR%paperclip"
+set "REQUIRED_NODE=22"
+
+:: ─── Banner ──────────────────────────────────────────────────────────────────
 echo.
-echo ========================================================
-echo    Paperclip  -  1-Click Setup Script
-echo    Orchestration for Zero-Human Companies
-echo ========================================================
+echo   [94m╔═══════════════════════════════════════════════════════════╗[0m
+echo   [94m║[0m   [96mPaperclip Setup[0m  [37m^|[0m  AgentsSwarm AI Task Installer      [94m║[0m
+echo   [94m╚═══════════════════════════════════════════════════════════╝[0m
 echo.
 
-echo [1/4] Checking prerequisites...
-echo.
+:: ─── Directory Guard ─────────────────────────────────────────────────────────
+if not exist "!PROJECT_DIR!" (
+  echo [ERROR] paperclip directory not found at: !PROJECT_DIR!
+  echo [INFO]  Run: git clone https://github.com/paperclipai/paperclip paperclip
+  exit /b 1
+)
 
+:: ─── [1/6] Prerequisite: Node.js ─────────────────────────────────────────────
+echo [1/6] Checking Node.js runtime...
 where node >nul 2>&1
-if !ERRORLEVEL! neq 0 (
-    echo [ERROR] Node.js is not installed or not in PATH.
-    echo         Please install Node.js v20+ from https://nodejs.org/
-    goto :fail
+if errorlevel 1 (
+  echo [ERROR] Node.js is not installed or not in PATH.
+  echo [INFO]  Download: https://nodejs.org/
+  exit /b 1
 )
-
-for /f "tokens=1,2 delims=." %%a in ('node -v 2^>nul') do (
-    set "NODE_VER_MAJOR_RAW=%%a"
-    set "NODE_VER_MINOR=%%b"
+for /f "tokens=1 delims=." %%v in ('node -v') do set "NODE_MAJOR_RAW=%%v"
+set "NODE_MAJOR=!NODE_MAJOR_RAW:v=!"
+if !NODE_MAJOR! LSS !REQUIRED_NODE! (
+  echo [ERROR] Node.js v!REQUIRED_NODE!+ required. Detected: v!NODE_MAJOR!.
+  exit /b 1
 )
-set "NODE_VER_MAJOR=!NODE_VER_MAJOR_RAW:v=!"
-if !NODE_VER_MAJOR! LSS 20 (
-    echo [ERROR] Node.js v20+ is required. Detected: v!NODE_VER_MAJOR!.
-    goto :fail
+echo [OK]   Node.js v!NODE_MAJOR! detected.
+
+:: ─── [2/6] Prerequisite: pnpm ────────────────────────────────────────────────
+echo [2/6] Checking pnpm...
+where pnpm >nul 2>&1
+if errorlevel 1 (
+  echo [WARN] pnpm not found. Installing globally...
+  call npm install -g pnpm
+  if errorlevel 1 (
+    echo [ERROR] Could not install pnpm. Resolve manually: npm install -g pnpm
+    exit /b 1
+  )
 )
-echo   [OK] Node.js v!NODE_VER_MAJOR!.!NODE_VER_MINOR! detected
+for /f %%v in ('pnpm -v') do echo [OK]   pnpm %%v detected.
 
-where git >nul 2>&1
-if !ERRORLEVEL! neq 0 (
-    echo [ERROR] Git is not installed or not in PATH.
-    echo         Please install Git from https://git-scm.com/
-    goto :fail
-)
-for /f "tokens=3" %%g in ('git --version 2^>nul') do set "GIT_VER=%%g"
-echo   [OK] Git !GIT_VER! detected
-
-where npx >nul 2>&1
-if !ERRORLEVEL! neq 0 (
-    echo [ERROR] npx is not installed or not in PATH.
-    echo         Please install Node.js + npm from https://nodejs.org/
-    goto :fail
-)
-echo   [OK] npx detected
-echo.
-
-echo [2/4] Cloning and installing paperclip...
-echo.
-
-if exist "paperclip" (
-    echo   [INFO] Directory "paperclip" already exists.
-    set "PAPERCLIP_EXISTS=1"
+:: ─── [3/6] Environment Bootstrap ────────────────────────────────────────────
+echo [3/6] Bootstrapping environment...
+if "!RESYNC_ENV!"=="1" (
+  if exist "!PROJECT_DIR!\.env.example" (
+    copy /y "!PROJECT_DIR!\.env.example" "!PROJECT_DIR!\.env" >nul
+    echo [OK]   .env force-resynced from .env.example.
+  ) else (
+    echo [WARN] No .env.example found — skipping resync.
+  )
+) else if not exist "!PROJECT_DIR!\.env" (
+  if exist "!PROJECT_DIR!\.env.example" (
+    copy /y "!PROJECT_DIR!\.env.example" "!PROJECT_DIR!\.env" >nul
+    echo [OK]   Created .env from .env.example.
+    echo [INFO] Generating secure random secret...
+    powershell -NoProfile -Command ^
+      "$s=[Convert]::ToBase64String((1..32|%%{[byte](Get-Random -Maximum 255)}));" ^
+      "(Get-Content '!PROJECT_DIR!\.env') -replace 'CHANGE_ME',$s | Set-Content '!PROJECT_DIR!\.env'" >nul 2>&1
+    echo [OK]   Secrets generated.
+  ) else (
+    echo [WARN] No .env.example found. Create !PROJECT_DIR!\.env manually.
+  )
 ) else (
-    echo   Cloning repository https://github.com/paperclipai/paperclip ...
-    git clone https://github.com/paperclipai/paperclip.git
-    if !ERRORLEVEL! neq 0 (
-        echo [ERROR] git clone failed. Check your network and the URL.
-        goto :fail
-    )
-    echo   [OK] Repository cloned
-    set "PAPERCLIP_EXISTS=0"
+  echo [OK]   .env already exists. Use --resync-env to overwrite.
 )
 
-pushd paperclip
-if !ERRORLEVEL! neq 0 (
-    echo [ERROR] Could not enter paperclip directory.
-    goto :fail
+:: ─── [4/6] Dependencies ──────────────────────────────────────────────────────
+echo [4/6] Installing dependencies...
+cd /d "!PROJECT_DIR!"
+if errorlevel 1 (
+  echo [ERROR] Could not enter !PROJECT_DIR!
+  exit /b 1
 )
-
-if "!PAPERCLIP_EXISTS!"=="1" (
-    echo   [UPDATE] Checking for updates from remote repository...
-    git pull
-    if !ERRORLEVEL! neq 0 (
-        echo   [WARN] Could not pull latest changes. Continuing with existing files.
-    ) else (
-        echo   [OK] Repository updated
-    )
+call pnpm install
+if errorlevel 1 (
+  echo [ERROR] pnpm install failed. Resolve errors above and retry.
+  exit /b 1
 )
+echo [OK]   Dependencies installed.
 
-echo   Installing dependencies with pnpm...
-call npx pnpm install
-if !ERRORLEVEL! neq 0 (
-    echo [ERROR] pnpm install failed. Please check the logs above.
-    popd
-    goto :fail
-)
-echo   [OK] Dependencies installed
-
-echo   [OK] Local runtime prepared
-echo.
-
-echo [3/4] Validating setup...
-echo.
-
-if exist "package.json" (
-    echo   [OK] Paperclip directory initialized successfully.
+:: ─── [5/6] Update ────────────────────────────────────────────────────────────
+if "!DO_UPDATE!"=="1" (
+  echo [5/6] Updating dependencies...
+  call pnpm update
+  if errorlevel 1 echo [WARN] pnpm update failed. Continuing with installed versions.
+  echo [OK]   Dependencies up to date.
 ) else (
-    echo   [WARN] Could not verify installation files.
+  echo [5/6] Skipping dependency update. Use --update to pull latest.
 )
-echo.
 
-echo [4/4] Finalizing...
-echo.
-echo ========================================================
-echo    Setup complete!
-echo ========================================================
-echo.
-echo   OPTION 1 - Use the launcher (recommended):
-echo     .\start_paperclip.bat
-echo.
-echo   OPTION 2 - Manual start from paperclip directory:
-echo     npx pnpm dev
-echo.
-echo   Paperclip UI will be available at: http://localhost:3100
-echo.
+:: ─── [6/6] Validation ────────────────────────────────────────────────────────
+if "!SKIP_TESTS!"=="0" (
+  echo [6/6] Running tests...
+  call pnpm test
+  if errorlevel 1 (
+    echo [WARN] Some tests failed. Resolve before production use.
+  ) else (
+    echo [OK]   All tests passed.
+  )
+) else (
+  echo [6/6] Skipping tests. Run setup without --skip-tests for full verification.
+)
 
-popd
-goto :end
-
-:fail
+:: ─── Summary ─────────────────────────────────────────────────────────────────
 echo.
-echo ========================================================
-echo    Setup failed. Please fix the errors above.
-echo ========================================================
+echo   [90m─────────────────────────────────────────────────────────────[0m
+echo   [92m  Paperclip setup complete![0m
+echo   [90m  Next steps:[0m
+echo   [90m    1. Edit [0m!PROJECT_DIR!\.env[90m — set OPENAI_API_KEY and other keys[0m
+echo   [90m    2. Run: [0mstart_paperclip.bat
+echo   [90m    3. Run: [0mstart_paperclip.bat --doctor[90m   (pre-flight check)[0m
+echo   [90m─────────────────────────────────────────────────────────────[0m
 echo.
-
-:end
 endlocal
-pause
+exit /b 0

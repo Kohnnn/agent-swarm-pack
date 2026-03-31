@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
 import { createBridgeServer } from '../src/index.js'
 import { createStatusRelay } from '../src/status-relay.js'
@@ -192,7 +195,21 @@ test('POST /ingest registers task routes for successful task commands', async (t
     senderId: '',
     senderName: '',
     providerProfileId: '',
+    providerModel: '',
+    fallbackProviderProfileId: '',
+    fallbackProviderProfileIds: [],
+    rolePresetId: '',
+    roleKey: '',
     compactPackKey: '',
+    activePackRoles: [],
+    workMode: '',
+    skillIds: [],
+    evaluateLoop: {
+      enabled: false,
+      maxTurns: 10,
+      timeoutMs: 300000,
+      approvalGate: false,
+    },
     projectPath: 'C:/workspace/project',
   })
 
@@ -231,7 +248,36 @@ test('summary endpoints expose providers, packs, and channels', async (t) => {
   const channelsResponse = await fetch(`${bridge.getListenUrl()}/channels`)
   const channels = await channelsResponse.json()
   assert.equal(channels.ok, true)
-  assert.deepEqual(channels.supportedPlatforms, ['telegram', 'discord', 'whatsapp', 'cli'])
+  assert.deepEqual(channels.supportedPlatforms, ['telegram', 'discord', 'whatsapp', 'slack', 'cli'])
+})
+
+test('dashboard endpoints expose html shell and live summary payload', async (t) => {
+  const bridge = createBridgeServer({
+    config: createConfig(),
+    bridgeState: {},
+    relayFactory: () => createRelayStub(),
+    saveState: () => {},
+  })
+  await bridge.start({ port: 0 })
+  t.after(async () => {
+    await bridge.stop()
+  })
+
+  const htmlResponse = await fetch(`${bridge.getListenUrl()}/`, {
+    headers: { accept: 'text/html' },
+  })
+  const htmlBody = await htmlResponse.text()
+  assert.equal(htmlResponse.status, 200)
+  assert.match(htmlResponse.headers.get('content-type') || '', /^text\/html/i)
+  assert.match(htmlBody, /AgentSwarm Monitor/)
+
+  const dashboardResponse = await fetch(`${bridge.getListenUrl()}/dashboard/data`)
+  const dashboardBody = await dashboardResponse.json()
+  assert.equal(dashboardResponse.status, 200)
+  assert.equal(dashboardBody.ok, true)
+  assert.equal(dashboardBody.summary.ok, true)
+  assert.ok(Array.isArray(dashboardBody.tasks))
+  assert.ok(Array.isArray(dashboardBody.approvals))
 })
 
 test('terminal relay updates prune managed task state after final notification', async (t) => {
@@ -428,4 +474,118 @@ test('POST /maintenance/prune removes expired routes', async (t) => {
   assert.equal(body.taskRoutesPruned, 1)
   assert.equal(body.managedTasksPruned, 1)
   assert.equal(body.statusEntriesPruned, 1)
+})
+
+test('api-prefixed runtime settings endpoints manage defaults and connections', async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agentsswarm-runtime-'))
+  const settingsFile = path.join(tempDir, 'runtime-settings.json')
+
+  const bridge = createBridgeServer({
+    config: createConfig(),
+    bridgeState: {},
+    relayFactory: () => createRelayStub(),
+    saveState: () => {},
+    settingsFile,
+  })
+  await bridge.start({ port: 0 })
+  t.after(async () => {
+    await bridge.stop()
+    await fs.rm(tempDir, { recursive: true, force: true })
+  })
+
+  const defaultsUpdate = await postJson(
+    `${bridge.getListenUrl()}/api/defaults`,
+    JSON.stringify({
+      providerProfileId: 'gemini-cli',
+      fallbackProviderProfileIds: ['codex-main', 'openrouter-fallback'],
+      workMode: 'team',
+      skillIds: ['release-skill'],
+    }),
+    { 'x-bridge-secret': 'bridge-secret' },
+  )
+  assert.equal(defaultsUpdate.status, 200)
+  const defaultsBody = await defaultsUpdate.json()
+  assert.equal(defaultsBody.defaults.providerProfileId, 'gemini-cli')
+  assert.equal(defaultsBody.defaults.fallbackProviderProfileId, 'codex-main')
+  assert.equal(defaultsBody.defaults.workMode, 'team')
+
+  const providerTest = await postJson(
+    `${bridge.getListenUrl()}/api/providers/test`,
+    JSON.stringify({
+      profileId: 'codex-main',
+      apiKey: 'valid-key',
+    }),
+    { 'x-bridge-secret': 'bridge-secret' },
+  )
+  assert.equal(providerTest.status, 200)
+
+  const presetApply = await postJson(
+    `${bridge.getListenUrl()}/api/providers/preset`,
+    JSON.stringify({ presetId: 'gemini-local-adapter' }),
+    { 'x-bridge-secret': 'bridge-secret' },
+  )
+  assert.equal(presetApply.status, 200)
+  const presetBody = await presetApply.json()
+  assert.equal(presetBody.defaults.providerProfileId, 'gemini-cli')
+
+  const saveConnection = await postJson(
+    `${bridge.getListenUrl()}/api/connections`,
+    JSON.stringify({
+      platform: 'discord',
+      accountId: 'primary',
+      channelId: 'orchestrator-room',
+      connectorId: 'connector-1',
+      agentId: 'orchestrator',
+      token: 'discord-token',
+      guildId: 'guild-1',
+    }),
+    { 'x-bridge-secret': 'bridge-secret' },
+  )
+  assert.equal(saveConnection.status, 200)
+
+  const listConnectionsResponse = await fetch(`${bridge.getListenUrl()}/api/connections`)
+  const listConnectionsBody = await listConnectionsResponse.json()
+  assert.equal(listConnectionsBody.connections.length, 1)
+  assert.equal(listConnectionsBody.connections[0].agentId, 'orchestrator')
+
+  const testConnection = await postJson(
+    `${bridge.getListenUrl()}/api/connections/test`,
+    JSON.stringify({ key: 'discord|primary|orchestrator-room|-' }),
+    { 'x-bridge-secret': 'bridge-secret' },
+  )
+  assert.equal(testConnection.status, 200)
+  const testConnectionBody = await testConnection.json()
+  assert.equal(testConnectionBody.connection.status, 'connected')
+
+  const deleteResponse = await fetch(`${bridge.getListenUrl()}/api/connections`, {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-bridge-secret': 'bridge-secret',
+    },
+    body: JSON.stringify({ key: 'discord|primary|orchestrator-room|-' }),
+  })
+  assert.equal(deleteResponse.status, 200)
+  const deleteBody = await deleteResponse.json()
+  assert.equal(deleteBody.removed, true)
+})
+
+test('provider status endpoint exposes opencode diagnostics', async (t) => {
+  const bridge = createBridgeServer({
+    config: createConfig(),
+    bridgeState: {},
+    relayFactory: () => createRelayStub(),
+    saveState: () => {},
+  })
+  await bridge.start({ port: 0 })
+  t.after(async () => {
+    await bridge.stop()
+  })
+
+  const response = await fetch(`${bridge.getListenUrl()}/api/providers/opencode-cli/status`)
+  const body = await response.json()
+  assert.equal(response.status, 200)
+  assert.equal(body.ok, true)
+  assert.equal(body.profileId, 'opencode-cli')
+  assert.equal(typeof body.status.available, 'boolean')
 })

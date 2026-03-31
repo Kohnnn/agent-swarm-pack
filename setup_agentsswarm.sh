@@ -48,6 +48,11 @@ fi
 echo "[4/6] Installing local dependencies..."
 npm install
 
+if [ -f "ui/package.json" ]; then
+  echo "[4/6] Installing UI dependencies..."
+  npm --prefix "ui" install
+fi
+
 if [ "${DO_UPDATE}" -eq 1 ]; then
   echo "[5/6] Updating local dependencies..."
   npm update || echo "[WARN] npm update failed. Continuing with installed versions."

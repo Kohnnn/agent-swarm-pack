@@ -4,14 +4,15 @@ const DEFAULT_PACKS = [
     label: "Software Delivery 6",
     description: "Compact hybrid software crew for build, review, and deployment loops.",
     defaultProviderProfileId: "codex-main",
+    workMode: "solo",
     maxAgents: 6,
     roles: [
-      { key: "orchestrator", label: "Orchestrator", providerProfileId: "codex-main" },
-      { key: "lead", label: "Implementation Lead", providerProfileId: "claude-cli" },
-      { key: "builder", label: "Implementation Worker", providerProfileId: "codex-main" },
-      { key: "reviewer", label: "Reviewer", providerProfileId: "copilot-review" },
-      { key: "ops", label: "Ops and Integrations", providerProfileId: "gemini-cli" },
-      { key: "support", label: "Research and Support", providerProfileId: "opencode-cli" },
+      { key: "orchestrator", label: "Orchestrator", providerProfileId: "codex-main", soul: "strategic planner", identity: "Keeps the full delivery sequence coherent." },
+      { key: "lead", label: "Implementation Lead", providerProfileId: "claude-cli", soul: "sequencing lead", identity: "Translates goals into scoped implementation steps." },
+      { key: "builder", label: "Implementation Worker", providerProfileId: "codex-main", soul: "hands-on implementer", identity: "Ships the concrete code changes." },
+      { key: "reviewer", label: "Reviewer", providerProfileId: "copilot-review", soul: "quality gate", identity: "Checks behavior, regressions, and release safety." },
+      { key: "ops", label: "Ops and Integrations", providerProfileId: "gemini-cli", soul: "systems operator", identity: "Handles runtime, deployment, and integration edges." },
+      { key: "support", label: "Research and Support", providerProfileId: "opencode-cli", soul: "research wing", identity: "Fills knowledge gaps and supporting detail." },
     ],
   },
   {
@@ -19,13 +20,14 @@ const DEFAULT_PACKS = [
     label: "Ops 5",
     description: "Compact operations crew for incidents, infra, and automation wiring.",
     defaultProviderProfileId: "gemini-cli",
+    workMode: "solo",
     maxAgents: 5,
     roles: [
-      { key: "orchestrator", label: "Ops Lead", providerProfileId: "claude-cli" },
-      { key: "integrations", label: "Integrations", providerProfileId: "opencode-cli" },
-      { key: "automation", label: "Automation", providerProfileId: "codex-main" },
-      { key: "reviewer", label: "Reviewer", providerProfileId: "copilot-review" },
-      { key: "research", label: "Research", providerProfileId: "gemini-cli" },
+      { key: "orchestrator", label: "Ops Lead", providerProfileId: "claude-cli", soul: "incident coordinator" },
+      { key: "integrations", label: "Integrations", providerProfileId: "opencode-cli", soul: "bridge builder" },
+      { key: "automation", label: "Automation", providerProfileId: "codex-main", soul: "automation operator" },
+      { key: "reviewer", label: "Reviewer", providerProfileId: "copilot-review", soul: "safety reviewer" },
+      { key: "research", label: "Research", providerProfileId: "gemini-cli", soul: "evidence scout" },
     ],
   },
   {
@@ -33,13 +35,14 @@ const DEFAULT_PACKS = [
     label: "Research 5",
     description: "Compact analysis crew for research, synthesis, and decision support.",
     defaultProviderProfileId: "gemini-cli",
+    workMode: "solo",
     maxAgents: 5,
     roles: [
-      { key: "orchestrator", label: "Research Lead", providerProfileId: "claude-cli" },
-      { key: "analyst", label: "Analyst", providerProfileId: "gemini-cli" },
-      { key: "writer", label: "Writer", providerProfileId: "codex-main" },
-      { key: "reviewer", label: "Reviewer", providerProfileId: "copilot-review" },
-      { key: "publisher", label: "Publisher", providerProfileId: "opencode-cli" },
+      { key: "orchestrator", label: "Research Lead", providerProfileId: "claude-cli", soul: "synthesis lead" },
+      { key: "analyst", label: "Analyst", providerProfileId: "gemini-cli", soul: "pattern finder" },
+      { key: "writer", label: "Writer", providerProfileId: "codex-main", soul: "explainer" },
+      { key: "reviewer", label: "Reviewer", providerProfileId: "copilot-review", soul: "fact checker" },
+      { key: "publisher", label: "Publisher", providerProfileId: "opencode-cli", soul: "packager" },
     ],
   },
   {
@@ -47,13 +50,14 @@ const DEFAULT_PACKS = [
     label: "Support 5",
     description: "Compact customer and channel support crew for triage and follow-through.",
     defaultProviderProfileId: "opencode-cli",
+    workMode: "solo",
     maxAgents: 5,
     roles: [
-      { key: "orchestrator", label: "Support Lead", providerProfileId: "claude-cli" },
-      { key: "triage", label: "Triage", providerProfileId: "opencode-cli" },
-      { key: "resolver", label: "Resolver", providerProfileId: "codex-main" },
-      { key: "reviewer", label: "QA", providerProfileId: "copilot-review" },
-      { key: "knowledge", label: "Knowledge Base", providerProfileId: "gemini-cli" },
+      { key: "orchestrator", label: "Support Lead", providerProfileId: "claude-cli", soul: "response coordinator" },
+      { key: "triage", label: "Triage", providerProfileId: "opencode-cli", soul: "frontline triage" },
+      { key: "resolver", label: "Resolver", providerProfileId: "codex-main", soul: "issue resolver" },
+      { key: "reviewer", label: "QA", providerProfileId: "copilot-review", soul: "quality check" },
+      { key: "knowledge", label: "Knowledge Base", providerProfileId: "gemini-cli", soul: "documentation steward" },
     ],
   },
 ]
@@ -76,6 +80,12 @@ function parseJson(raw) {
   }
 }
 
+export function normalizeWorkMode(value) {
+  const normalized = normalizeText(value).toLowerCase()
+  if (["solo", "team", "parallel"].includes(normalized)) return normalized
+  return "solo"
+}
+
 function normalizeRole(raw, index = 0) {
   if (!isPlainObject(raw)) return null
   const key = normalizeText(raw.key) || `role-${index + 1}`
@@ -83,6 +93,8 @@ function normalizeRole(raw, index = 0) {
     key,
     label: normalizeText(raw.label) || key,
     providerProfileId: normalizeText(raw.providerProfileId),
+    soul: normalizeText(raw.soul),
+    identity: normalizeText(raw.identity),
   }
 }
 
@@ -98,6 +110,7 @@ function normalizePack(raw, index = 0) {
     label: normalizeText(raw.label) || key,
     description: normalizeText(raw.description),
     defaultProviderProfileId: normalizeText(raw.defaultProviderProfileId),
+    workMode: normalizeWorkMode(raw.workMode),
     maxAgents,
     roles: roles.slice(0, maxAgents),
   }

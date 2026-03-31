@@ -14,7 +14,7 @@ for arg in "$@"; do
 done
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="${ROOT_DIR}/claw-empire"
+PROJECT_DIR="${ROOT_DIR}/paperclip"
 REQUIRED_NODE=22
 
 # ─── Colors ───────────────────────────────────────────────────────────────────
@@ -30,14 +30,14 @@ NC='\033[0m'
 # ─── Banner ───────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}${BLUE}  ╔═══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BOLD}${BLUE}  ║${NC}  ${CYAN}Claw Empire Setup${NC}  ${GREY}|${NC}  AgentsSwarm Empire Installer     ${BOLD}${BLUE}║${NC}"
+echo -e "${BOLD}${BLUE}  ║${NC}   ${CYAN}Paperclip Setup${NC}  ${GREY}|${NC}  AgentsSwarm AI Task Installer      ${BOLD}${BLUE}║${NC}"
 echo -e "${BOLD}${BLUE}  ╚═══════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
 # ─── Directory Guard ──────────────────────────────────────────────────────────
 if [ ! -d "${PROJECT_DIR}" ]; then
-  echo -e "${RED}[ERROR]${NC} claw-empire directory not found at: ${PROJECT_DIR}"
-  echo -e "${GREY}[INFO]${NC}  Run: git clone https://github.com/GreenSheep01201/claw-empire claw-empire"
+  echo -e "${RED}[ERROR]${NC} paperclip directory not found at: ${PROJECT_DIR}"
+  echo -e "${GREY}[INFO]${NC}  Run: git clone https://github.com/paperclipai/paperclip paperclip"
   exit 1
 fi
 
@@ -68,7 +68,6 @@ echo -e "${GREEN}[OK]${NC}   pnpm $(pnpm -v) detected."
 
 # ─── [3/6] Environment Bootstrap ─────────────────────────────────────────────
 echo -e "${GREY}[3/6]${NC} Bootstrapping environment..."
-echo -e "${GREY}[INFO]${NC} Note: Claw Empire uses Node.js --experimental-sqlite (no SQLite CLI needed)."
 if [ "${RESYNC_ENV}" -eq 1 ]; then
   if [ -f "${PROJECT_DIR}/.env.example" ]; then
     cp "${PROJECT_DIR}/.env.example" "${PROJECT_DIR}/.env"
@@ -108,8 +107,7 @@ fi
 
 # ─── [6/6] Validation ─────────────────────────────────────────────────────────
 if [ "${SKIP_TESTS}" -eq 0 ]; then
-  echo -e "${GREY}[6/6]${NC} Running tests (with --experimental-sqlite)..."
-  export NODE_OPTIONS="--experimental-sqlite"
+  echo -e "${GREY}[6/6]${NC} Running tests..."
   if pnpm test; then
     echo -e "${GREEN}[OK]${NC}   All tests passed."
   else
@@ -122,11 +120,10 @@ fi
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREY}  ─────────────────────────────────────────────────────────────${NC}"
-echo -e "${BOLD}${GREEN}  Claw Empire setup complete!${NC}"
+echo -e "${BOLD}${GREEN}  Paperclip setup complete!${NC}"
 echo -e "${GREY}  Next steps:${NC}"
-echo -e "${GREY}    1. Edit ${NC}${PROJECT_DIR}/.env${GREY} — configure AI provider keys${NC}"
-echo -e "${GREY}    2. Run: ${NC}./start_claw-empire.sh"
-echo -e "${GREY}    3. Run: ${NC}./start_claw-empire.sh --doctor${GREY}   (pre-flight check)${NC}"
-echo -e "${GREY}  Note: SQLite is built-in (NODE_OPTIONS=--experimental-sqlite)${NC}"
+echo -e "${GREY}    1. Edit ${NC}${PROJECT_DIR}/.env${GREY} — set OPENAI_API_KEY and other keys${NC}"
+echo -e "${GREY}    2. Run: ${NC}./start_paperclip.sh"
+echo -e "${GREY}    3. Run: ${NC}./start_paperclip.sh --doctor${GREY}   (pre-flight check)${NC}"
 echo -e "${GREY}  ─────────────────────────────────────────────────────────────${NC}"
 echo ""

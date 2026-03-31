@@ -98,14 +98,18 @@ Useful start flags:
 - `--dev`: watch mode
 - `--update`: run `npm update` before launch
 - `--resync-env`: force env re-sync before launch
-- `--with-swarmclaw`: auto-start SwarmClaw when it is not already running
-- `--bridge-only`: do not auto-start SwarmClaw
-- `--doctor`: run doctor when already running, or preflight before launch
+- `--doctor`: run doctor after startup
+
+One-click runtime behavior:
+
+- `start_agentsswarm.bat` and `start_agentsswarm.sh` always stop any process already bound to `BRIDGE_PORT` before launch.
+- Launch runs in the current terminal so runtime logs stay visible.
+- Monitor UI is available at `http://127.0.0.1:7799/dashboard` once startup completes.
 
 Examples:
 
 ```powershell
-.\start_agentsswarm.bat --with-swarmclaw --doctor
+.\start_agentsswarm.bat --doctor
 ```
 
 ```bash

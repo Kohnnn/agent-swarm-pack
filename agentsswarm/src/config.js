@@ -1,7 +1,18 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { normalizeChannelRouteMap, normalizePlatform } from './channels.js'
-import { resolveEnvFilePath } from './runtime-paths.js'
+import {
+  resolveDataDir,
+  resolveEnvFilePath,
+  resolveScheduleFilePath,
+  resolveSettingsFilePath,
+  resolveSkillDir,
+  resolveStandaloneApprovalFilePath,
+  resolveStandaloneTaskFilePath,
+  resolveStandaloneTaskRunDir,
+  resolveStateFilePath,
+  resolveTemplateDir,
+} from './runtime-paths.js'
 
 function loadEnvFile(filePath, target = process.env) {
   if (!fs.existsSync(filePath)) return
@@ -96,6 +107,22 @@ function resolveTaskCommandMode(value, issues) {
   return 'hybrid'
 }
 
+function resolveExecutionBackend(value, issues) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (!normalized) return 'standalone'
+  if (['standalone', 'remote_api'].includes(normalized)) return normalized
+  addIssue(issues, `EXECUTION_BACKEND=${normalized} is invalid; falling back to standalone.`)
+  return 'standalone'
+}
+
+function resolveConnectorBackend(value, issues) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (!normalized) return 'none'
+  if (['none', 'external_connector'].includes(normalized)) return normalized
+  addIssue(issues, `CONNECTOR_BACKEND=${normalized} is invalid; falling back to none.`)
+  return 'none'
+}
+
 function validateAbsolutePath(issues, label, value) {
   const text = String(value || '').trim()
   if (!text) return
@@ -121,17 +148,30 @@ export function loadConfig(env = process.env, options = {}) {
   parseJsonOverride(env.AGENTSSWARM_PACKS_JSON, issues, 'AGENTSSWARM_PACKS_JSON', {
     allowArray: true,
   })
+  const packageRoot = path.resolve(resolveDataDir(env), '..')
+  const defaultProjectPath = String(env.DEFAULT_PROJECT_PATH || '').trim()
+  const executionBackend = resolveExecutionBackend(env.EXECUTION_BACKEND, issues)
+  const connectorBackend = resolveConnectorBackend(env.CONNECTOR_BACKEND, issues)
+  const standaloneAllowedProjectRoots = asList(
+    env.STANDALONE_ALLOWED_PROJECT_ROOTS,
+    defaultProjectPath ? [defaultProjectPath] : [packageRoot],
+  ).map((entry) => path.resolve(entry))
 
   const config = {
     port: asInt(env.BRIDGE_PORT, 7799),
     bridgeSecret: String(env.BRIDGE_SECRET || '').trim(),
     allowUnsecuredBridge,
+    executionBackend,
+    connectorBackend,
     swarmclawUrl: normalizeUrl(env.SWARMCLAW_URL, 'http://127.0.0.1:3456'),
     swarmclawAccessKey: String(env.SWARMCLAW_ACCESS_KEY || '').trim(),
+    connectorApiKey: String(env.CONNECTOR_API_KEY || env.SWARMCLAW_ACCESS_KEY || '').trim(),
     agentsswarmApiUrl: normalizeUrl(env.AGENTSSWARM_API_URL || env.CLAW_EMPIRE_URL, 'http://127.0.0.1:8790'),
+    remoteApiUrl: normalizeUrl(env.REMOTE_API_URL || env.AGENTSSWARM_API_URL || env.CLAW_EMPIRE_URL, 'http://127.0.0.1:8790'),
     agentsswarmAuthToken: String(env.AGENTSSWARM_AUTH_TOKEN || env.CLAW_EMPIRE_AUTH_TOKEN || '').trim(),
     inboxWebhookSecret: String(env.INBOX_WEBHOOK_SECRET || '').trim(),
-    defaultProjectPath: String(env.DEFAULT_PROJECT_PATH || '').trim(),
+    remoteInboxSecret: String(env.REMOTE_INBOX_SECRET || env.INBOX_WEBHOOK_SECRET || '').trim(),
+    defaultProjectPath,
     defaultPlatform,
     defaultAccountId,
     defaultRoute: {
@@ -158,7 +198,7 @@ export function loadConfig(env = process.env, options = {}) {
     providerProfilesRaw: String(env.AGENTSSWARM_PROVIDER_PROFILES_JSON || '').trim(),
     compactPacksRaw: String(env.AGENTSSWARM_PACKS_JSON || '').trim(),
     requiredCliToolIds: asList(env.AGENTSSWARM_REQUIRED_CLI_TOOLS, ['openclaw', 'codex']),
-    supportedPlatforms: asList(env.AGENTSSWARM_SUPPORTED_PLATFORMS, ['telegram', 'discord', 'whatsapp', 'cli']),
+    supportedPlatforms: asList(env.AGENTSSWARM_SUPPORTED_PLATFORMS, ['telegram', 'discord', 'whatsapp', 'slack', 'cli']),
     maxIngestBodyBytes: asInt(env.MAX_INGEST_BODY_BYTES, 64 * 1024),
     ingestMessageIdTtlMs: asInt(env.INGEST_MESSAGE_ID_TTL_MS, 5 * 60 * 1000),
     channelRouteTtlMs: asInt(env.CHANNEL_ROUTE_TTL_MS, 7 * 24 * 60 * 60 * 1000),
@@ -167,10 +207,31 @@ export function loadConfig(env = process.env, options = {}) {
     projectPathCacheTtlMs: asInt(env.PROJECT_PATH_CACHE_TTL_MS, 5 * 60 * 1000),
     httpRetryMaxAttempts: asInt(env.HTTP_RETRY_MAX_ATTEMPTS, 2, { min: 1, max: 5 }),
     httpRetryBaseDelayMs: asInt(env.HTTP_RETRY_BASE_DELAY_MS, 250),
+    standaloneTaskRunnerCommand: String(env.STANDALONE_TASK_RUNNER_COMMAND || '').trim(),
+    standaloneTaskRunnerArgs: asList(env.STANDALONE_TASK_RUNNER_ARGS, []),
+    standaloneTaskRunnerTimeoutMs: asInt(env.STANDALONE_TASK_RUNNER_TIMEOUT_MS, 5 * 60 * 1000),
+    standaloneTaskRunnerConcurrency: asInt(env.STANDALONE_TASK_RUNNER_CONCURRENCY, 2, { min: 1, max: 20 }),
+    standaloneAllowedProjectRoots,
     configIssues: issues,
+    runtimePaths: {
+      packageRoot,
+      envFile: resolveEnvFilePath(env),
+      dataDir: resolveDataDir(env),
+      stateFile: resolveStateFilePath(env),
+      settingsFile: resolveSettingsFilePath(env),
+      templateDir: resolveTemplateDir(env),
+      skillDir: resolveSkillDir(env),
+      standaloneApprovalFile: resolveStandaloneApprovalFilePath(env),
+      standaloneTaskFile: resolveStandaloneTaskFilePath(env),
+      standaloneTaskRunDir: resolveStandaloneTaskRunDir(env),
+      scheduleFile: resolveScheduleFilePath(env),
+    },
   }
 
   validateAbsolutePath(issues, 'DEFAULT_PROJECT_PATH', config.defaultProjectPath)
+  for (const root of config.standaloneAllowedProjectRoots) {
+    validateAbsolutePath(issues, 'STANDALONE_ALLOWED_PROJECT_ROOTS', root)
+  }
 
   if (!config.bridgeSecret && config.allowUnsecuredBridge) {
     addIssue(issues, 'ALLOW_UNSECURED_BRIDGE is enabled; /ingest accepts unauthenticated requests.')

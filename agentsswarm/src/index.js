@@ -1,19 +1,63 @@
 import http from 'node:http'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { loadAgentsTemplate, loadIdentityTemplate, loadSoulTemplate } from './agent-soul.js'
+import { listChannelTemplates } from './channel-templates.js'
 import { listSupportedPlatforms, normalizeChannelEnvelope, sanitizeRoute, toChannelRouteKey } from './channels.js'
 import { listCompactPacks } from './compact-packs.js'
 import { loadConfig } from './config.js'
+import { createConnectorManager } from './connector-manager.js'
 import { createAndRunTaskInAgentsswarm, forwardDirectiveToAgentsswarm } from './forwarder.js'
 import { createRequestId, createTextPreview, logError, logInfo, logWarn } from './logger.js'
-import { buildProviderSummary } from './providers.js'
+import { createRuntimeMetrics } from './metrics.js'
+import { buildProviderSummary, discoverProviderModels, getOpenCodeStatus, listProviderModels } from './providers.js'
+import { listRolePresets } from './role-presets.js'
+import { listConnections, loadRuntimeSettings, saveRuntimeSettings, updateDefaults } from './runtime-settings.js'
+import { createScheduleManager } from './schedule-manager.js'
+import { loadSkillFromPath, loadSkillFromUrl, listLoadedSkills, matchSkillsToTask, saveLoadedSkill } from './skill-loader.js'
+import { createStandaloneApprovalManager } from './standalone-approvals.js'
+import { createStandaloneTaskManager } from './standalone-tasks.js'
 import { createStatusRelay } from './status-relay.js'
 import { loadBridgeState, saveBridgeState } from './state-store.js'
+import { normalizeBooleanFlag, normalizeTaskPriority } from './task-fields.js'
 
 const MAX_TEXT_LENGTH = 4_000
 const MAX_ROUTE_VALUE_LENGTH = 256
 const MAX_ID_LENGTH = 160
 const MAX_PROJECT_PATH_LENGTH = 1_024
+
+const OFFICIAL_PROVIDER_PRESETS = [
+  {
+    id: 'opencode-go-direct',
+    label: 'OpenCode Go Direct',
+    description: 'Primary OpenCode with Codex and OpenRouter fallback chain.',
+    baseUrl: 'https://api.opencode.ai/v1',
+    defaults: {
+      providerProfileId: 'opencode-cli',
+      fallbackProviderProfileIds: ['codex-main', 'openrouter-fallback'],
+    },
+  },
+  {
+    id: 'bailian-coding-plan',
+    label: 'Bailian Coding Plan',
+    description: 'Bailian-oriented chain favoring Claude fallback for reviews.',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    defaults: {
+      providerProfileId: 'claude-cli',
+      fallbackProviderProfileIds: ['gemini-cli', 'openrouter-fallback'],
+    },
+  },
+  {
+    id: 'gemini-local-adapter',
+    label: 'Gemini CLI Local Adapter',
+    description: 'Gemini first with local fallback path for direct local runs.',
+    baseUrl: 'local-cli',
+    defaults: {
+      providerProfileId: 'gemini-cli',
+      fallbackProviderProfileIds: ['codex-main', 'openrouter-fallback'],
+    },
+  },
+]
 
 function json(res, statusCode, payload, headers = {}) {
   res.writeHead(statusCode, {
@@ -21,6 +65,218 @@ function json(res, statusCode, payload, headers = {}) {
     ...headers,
   })
   res.end(JSON.stringify(payload))
+}
+
+function html(res, statusCode, content, headers = {}) {
+  res.writeHead(statusCode, {
+    'Content-Type': 'text/html; charset=utf-8',
+    ...headers,
+  })
+  res.end(content)
+}
+
+function requestWantsHtml(req) {
+  const accept = String(req?.headers?.accept || '').toLowerCase()
+  return accept.includes('text/html')
+}
+
+function renderDashboardPage() {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AgentSwarm Monitor</title>
+    <style>
+      body { margin: 0; padding: 16px; font-family: "Segoe UI", Tahoma, sans-serif; background: #0f172a; color: #e2e8f0; }
+      .wrap { max-width: 1120px; margin: 0 auto; }
+      h1 { margin: 0 0 4px; font-size: 1.6rem; }
+      .muted { color: #94a3b8; }
+      .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin: 14px 0; }
+      .card { border: 1px solid #334155; border-radius: 12px; padding: 10px; background: #111b33; }
+      .label { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: #94a3b8; }
+      .value { margin-top: 5px; font-size: 1.6rem; font-weight: 700; }
+      .hint { margin-top: 3px; font-size: 0.8rem; color: #94a3b8; }
+      .panel { border: 1px solid #334155; border-radius: 12px; padding: 10px; background: #111b33; margin-top: 12px; }
+      table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+      th, td { border-bottom: 1px solid #334155; padding: 7px 6px; text-align: left; font-size: 0.86rem; }
+      th { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: #94a3b8; }
+      code { color: #93c5fd; font-family: Consolas, monospace; }
+      .pill { display: inline-block; border: 1px solid #475569; border-radius: 999px; padding: 2px 8px; font-size: 0.75rem; }
+      .status { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+      .dot { width: 10px; height: 10px; border-radius: 999px; background: #64748b; }
+      .dot.live { background: #22c55e; box-shadow: 0 0 0 5px rgba(34, 197, 94, 0.16); }
+      .dot.warn { background: #f59e0b; box-shadow: 0 0 0 5px rgba(245, 158, 11, 0.16); }
+      .dot.error { background: #ef4444; box-shadow: 0 0 0 5px rgba(239, 68, 68, 0.16); }
+      button { border: 1px solid #3b82f6; background: #1d4ed8; color: #dbeafe; border-radius: 9px; padding: 6px 10px; cursor: pointer; }
+      .head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="head">
+        <div>
+          <h1>AgentSwarm Monitor</h1>
+          <div class="muted">Live local dashboard for tasks, routes, and approvals</div>
+          <div class="status"><span id="status-dot" class="dot"></span><span id="status-text" class="muted">Connecting...</span></div>
+        </div>
+        <div>
+          <button id="refresh-btn" type="button">Refresh</button>
+          <div class="muted" style="margin-top:6px; font-size:0.8rem;">Last refresh: <span id="last-refresh">never</span></div>
+        </div>
+      </div>
+
+      <section class="row">
+        <article class="card"><div class="label">Tasks</div><div class="value" id="tasks-total">0</div><div class="hint" id="tasks-hint">-</div></article>
+        <article class="card"><div class="label">Pending approvals</div><div class="value" id="approvals-total">0</div><div class="hint" id="approvals-hint">-</div></article>
+        <article class="card"><div class="label">Active runs</div><div class="value" id="runs-total">0</div><div class="hint" id="runs-hint">-</div></article>
+        <article class="card"><div class="label">Route entries</div><div class="value" id="routes-total">0</div><div class="hint" id="routes-hint">-</div></article>
+      </section>
+
+      <section class="panel">
+        <div class="label">Recent tasks</div>
+        <table>
+          <thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Approval</th><th>Updated</th></tr></thead>
+          <tbody id="tasks-table"><tr><td colspan="6" class="muted">No tasks yet.</td></tr></tbody>
+        </table>
+      </section>
+
+      <section class="panel">
+        <div class="label">Approvals</div>
+        <table>
+          <thead><tr><th>ID</th><th>Task</th><th>Status</th><th>Priority</th><th>Updated</th></tr></thead>
+          <tbody id="approvals-table"><tr><td colspan="5" class="muted">No approvals yet.</td></tr></tbody>
+        </table>
+      </section>
+    </div>
+
+    <script>
+      (function () {
+        var statusDot = document.getElementById("status-dot")
+        var statusText = document.getElementById("status-text")
+        var refreshBtn = document.getElementById("refresh-btn")
+        var lastRefresh = document.getElementById("last-refresh")
+
+        function safeText(value) {
+          return String(value == null ? "" : value)
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#39;")
+        }
+
+        function setStatus(kind, text) {
+          statusDot.className = "dot " + kind
+          statusText.textContent = text
+        }
+
+        function setValue(id, value) {
+          var node = document.getElementById(id)
+          if (!node) return
+          node.textContent = String(value)
+        }
+
+        function pill(value) {
+          var text = String(value || "unknown")
+          return '<span class="pill">' + safeText(text) + '</span>'
+        }
+
+        function formatTime(value) {
+          if (!value) return "-"
+          var date = new Date(value)
+          if (Number.isNaN(date.getTime())) return "-"
+          return date.toLocaleString()
+        }
+
+        function renderTasks(tasks) {
+          var rows = Array.isArray(tasks) ? tasks : []
+          var table = document.getElementById("tasks-table")
+          if (rows.length <= 0) {
+            table.innerHTML = '<tr><td colspan="6" class="muted">No tasks yet.</td></tr>'
+            return
+          }
+          table.innerHTML = rows.map(function (task) {
+            return [
+              "<tr>",
+              "<td><code>" + safeText(task.id || "") + "</code></td>",
+              "<td>" + safeText(task.title || task.description || "(untitled)") + "</td>",
+              "<td>" + pill(task.status) + "</td>",
+              "<td>" + pill(task.priority) + "</td>",
+              "<td>" + pill(task.approvalStatus || "none") + "</td>",
+              '<td class="muted">' + safeText(formatTime(task.updatedAt || task.createdAt)) + '</td>',
+              "</tr>",
+            ].join("")
+          }).join("")
+        }
+
+        function renderApprovals(approvals) {
+          var rows = Array.isArray(approvals) ? approvals : []
+          var table = document.getElementById("approvals-table")
+          if (rows.length <= 0) {
+            table.innerHTML = '<tr><td colspan="5" class="muted">No approvals yet.</td></tr>'
+            return
+          }
+          table.innerHTML = rows.map(function (approval) {
+            return [
+              "<tr>",
+              "<td><code>" + safeText(approval.id || "") + "</code></td>",
+              "<td>" + safeText(approval.taskTitle || approval.taskId || "-") + "</td>",
+              "<td>" + pill(approval.status) + "</td>",
+              "<td>" + pill(approval.priority) + "</td>",
+              '<td class="muted">' + safeText(formatTime(approval.updatedAt || approval.createdAt)) + '</td>',
+              "</tr>",
+            ].join("")
+          }).join("")
+        }
+
+        async function refresh() {
+          setStatus("warn", "Refreshing...")
+          refreshBtn.disabled = true
+          try {
+            var response = await fetch("/dashboard/data", { cache: "no-store" })
+            if (!response.ok) throw new Error("http_" + response.status)
+            var payload = await response.json()
+            var summary = payload.summary || {}
+            var routes = summary.routes || {}
+            var standaloneTasks = summary.standaloneTasks || {}
+            var approvalsSummary = summary.approvals || {}
+
+            var routeTotal = Number(routes.channels || 0) + Number(routes.projects || 0) + Number(routes.tasks || 0)
+            setValue("tasks-total", standaloneTasks.total || 0)
+            setValue("tasks-hint", "pending approval: " + Number(standaloneTasks.approvalsPending || 0))
+            setValue("approvals-total", approvalsSummary.pending || 0)
+            setValue("approvals-hint", "approved: " + Number(approvalsSummary.approved || 0) + " | rejected: " + Number(approvalsSummary.rejected || 0))
+            setValue("runs-total", standaloneTasks.activeRuns || 0)
+            setValue("runs-hint", standaloneTasks.runnerConfigured ? "runner configured" : "runner not configured")
+            setValue("routes-total", routeTotal)
+            setValue("routes-hint", "ch:" + Number(routes.channels || 0) + " | pr:" + Number(routes.projects || 0) + " | tk:" + Number(routes.tasks || 0))
+
+            renderTasks(payload.tasks)
+            renderApprovals(payload.approvals)
+
+            setStatus("live", "Live")
+            lastRefresh.textContent = new Date().toLocaleString()
+          } catch (error) {
+            setStatus("error", "Refresh failed")
+            lastRefresh.textContent = String(error && error.message ? error.message : error)
+          } finally {
+            refreshBtn.disabled = false
+          }
+        }
+
+        refreshBtn.addEventListener("click", function () {
+          void refresh()
+        })
+
+        void refresh()
+        setInterval(function () {
+          void refresh()
+        }, 5000)
+      })()
+    </script>
+  </body>
+</html>`
 }
 
 function createHttpError(statusCode, code) {
@@ -49,6 +305,139 @@ function validateAbsolutePath(projectPath) {
   if (!path.isAbsolute(projectPath)) {
     throw createHttpError(400, 'project_path_must_be_absolute')
   }
+}
+
+function decodePathSegment(value) {
+  try {
+    return decodeURIComponent(String(value || ''))
+  } catch {
+    return ''
+  }
+}
+
+function stripApiPrefix(pathname) {
+  const normalized = String(pathname || '')
+  if (normalized === '/api') return '/'
+  if (normalized.startsWith('/api/')) {
+    const withoutPrefix = normalized.slice(4)
+    return withoutPrefix || '/'
+  }
+  return normalized || '/'
+}
+
+function parseConnectionKey(rawKey, defaults = {}) {
+  const parts = String(rawKey || '').split('|')
+  return {
+    platform: parts[0] || defaults.defaultPlatform || 'telegram',
+    accountId: parts[1] || defaults.defaultAccountId || 'primary',
+    channelId: parts[2] && parts[2] !== '-' ? parts[2] : '',
+    threadId: parts[3] && parts[3] !== '-' ? parts[3] : '',
+  }
+}
+
+function normalizeFallbackChain(rawValue) {
+  const values = Array.isArray(rawValue)
+    ? rawValue
+    : typeof rawValue === 'string'
+      ? [rawValue]
+      : []
+  return Array.from(new Set(values.map((entry) => normalize(entry)).filter(Boolean)))
+}
+
+function normalizeStringArray(rawValue) {
+  if (Array.isArray(rawValue)) {
+    return Array.from(new Set(rawValue.map((entry) => normalize(entry)).filter(Boolean)))
+  }
+  return []
+}
+
+function normalizeEvaluateLoopInput(rawValue) {
+  if (!rawValue || typeof rawValue !== 'object' || Array.isArray(rawValue)) {
+    return {
+      enabled: false,
+      maxTurns: 10,
+      timeoutMs: 300000,
+      approvalGate: false,
+    }
+  }
+  return {
+    enabled: rawValue.enabled === true,
+    maxTurns: Math.min(Math.max(Number(rawValue.maxTurns || 10), 1), 20),
+    timeoutMs: Math.min(Math.max(Number(rawValue.timeoutMs || 300000), 1000), 900000),
+    approvalGate: rawValue.approvalGate === true,
+  }
+}
+
+function normalizeModelOverrides(rawValue) {
+  if (!rawValue || typeof rawValue !== 'object' || Array.isArray(rawValue)) return {}
+  const normalized = {}
+  for (const [profileId, model] of Object.entries(rawValue)) {
+    const key = normalize(profileId)
+    const value = normalize(model)
+    if (!key || !value) continue
+    normalized[key] = value
+  }
+  return normalized
+}
+
+function normalizeRoleRoutes(rawValue) {
+  if (!rawValue || typeof rawValue !== 'object' || Array.isArray(rawValue)) return {}
+  const normalized = {}
+  for (const [roleKey, route] of Object.entries(rawValue)) {
+    const key = normalize(roleKey)
+    if (!key || !route || typeof route !== 'object' || Array.isArray(route)) continue
+    const fallbackProviderProfileIds = normalizeFallbackChain(
+      route.fallbackProviderProfileIds?.length > 0
+        ? route.fallbackProviderProfileIds
+        : route.fallbackProviderProfileId,
+    )
+    normalized[key] = {
+      providerProfileId: normalize(route.providerProfileId),
+      providerModel: normalize(route.providerModel),
+      fallbackProviderProfileId: normalize(route.fallbackProviderProfileId) || fallbackProviderProfileIds[0] || '',
+      fallbackProviderProfileIds,
+      soul: normalize(route.soul),
+      identity: normalize(route.identity),
+    }
+  }
+  return normalized
+}
+
+function normalizeCustomPreset(rawValue = {}) {
+  if (!rawValue || typeof rawValue !== 'object' || Array.isArray(rawValue)) return null
+  const id = normalize(rawValue.id)
+  if (!id) return null
+  const defaults = rawValue.defaults && typeof rawValue.defaults === 'object' && !Array.isArray(rawValue.defaults)
+    ? rawValue.defaults
+    : {}
+  const fallbackProviderProfileIds = normalizeFallbackChain(
+    defaults.fallbackProviderProfileIds?.length > 0
+      ? defaults.fallbackProviderProfileIds
+      : defaults.fallbackProviderProfileId,
+  )
+  return {
+    id,
+    label: normalize(rawValue.label) || id,
+    description: normalize(rawValue.description),
+    defaults: {
+      providerProfileId: normalize(defaults.providerProfileId),
+      providerModel: normalize(defaults.providerModel),
+      fallbackProviderProfileId: normalize(defaults.fallbackProviderProfileId) || fallbackProviderProfileIds[0] || '',
+      fallbackProviderProfileIds,
+      compactPackKey: normalize(defaults.compactPackKey),
+      rolePresetId: normalize(defaults.rolePresetId),
+      taskCommandMode: normalize(defaults.taskCommandMode),
+    },
+    updatedAt: normalize(rawValue.updatedAt) || new Date().toISOString(),
+  }
+}
+
+function normalizeCustomPresets(rawValue) {
+  if (!Array.isArray(rawValue)) return []
+  return rawValue
+    .map((entry) => normalizeCustomPreset(entry))
+    .filter(Boolean)
+    .slice(0, 100)
 }
 
 function resolveDedupeKey(parsed) {
@@ -145,9 +534,23 @@ export function validateIngestBody(body, config) {
   }
 
   const providerProfileId = normalize(body.providerProfileId)
+  const providerModel = normalize(body.providerModel)
+  const fallbackProviderProfileId = normalize(body.fallbackProviderProfileId)
+  const fallbackProviderProfileIds = normalizeFallbackChain(body.fallbackProviderProfileIds || body.fallbackProviderProfileId)
+  const rolePresetId = normalize(body.rolePresetId)
+  const roleKey = normalize(body.roleKey)
   const compactPackKey = normalize(body.compactPackKey)
+  const workMode = normalize(body.workMode)
+  const skillIds = normalizeStringArray(body.skillIds)
+  const evaluateLoop = normalizeEvaluateLoopInput(body.evaluateLoop)
   validateMaxLength(providerProfileId, MAX_ID_LENGTH, 'provider_profile_id_too_long')
+  validateMaxLength(providerModel, MAX_ROUTE_VALUE_LENGTH, 'provider_model_too_long')
+  validateMaxLength(fallbackProviderProfileId, MAX_ID_LENGTH, 'fallback_provider_profile_id_too_long')
+  validateMaxLength(rolePresetId, MAX_ID_LENGTH, 'role_preset_id_too_long')
+  validateMaxLength(roleKey, MAX_ID_LENGTH, 'role_key_too_long')
   validateMaxLength(compactPackKey, MAX_ID_LENGTH, 'compact_pack_key_too_long')
+  const priority = normalizeTaskPriority(body.priority)
+  const requiresApproval = normalizeBooleanFlag(body.requiresApproval, false)
 
   return {
     text,
@@ -157,18 +560,78 @@ export function validateIngestBody(body, config) {
     senderId: normalize(body.senderId),
     senderName: normalize(body.senderName),
     providerProfileId,
+    providerModel,
+    fallbackProviderProfileId,
+    fallbackProviderProfileIds,
+    rolePresetId,
+    roleKey,
     compactPackKey,
+    workMode,
+    skillIds,
+    evaluateLoop,
+    activePackRoles: normalizeStringArray(body.activePackRoles),
+    priority,
+    requiresApproval,
     messageId,
   }
 }
 
 export function createBridgeServer(options = {}) {
   const config = options.config || loadConfig()
+  const runtimeMetrics = options.runtimeMetrics || createRuntimeMetrics()
+  config.runtimeMetrics = runtimeMetrics
   const bridgeState = options.bridgeState || loadBridgeState()
   const saveState = options.saveState || saveBridgeState
   const forwardDirective = options.forwardDirective || forwardDirectiveToAgentsswarm
   const createTaskAndRun = options.createTaskAndRun || createAndRunTaskInAgentsswarm
   const relayFactory = options.relayFactory || createStatusRelay
+  const useStandaloneExecution = config.executionBackend === 'standalone'
+  const standaloneTaskManager = useStandaloneExecution ? createStandaloneTaskManager(config) : null
+  const standaloneApprovalManager = useStandaloneExecution ? createStandaloneApprovalManager(config) : null
+  const runtimeSettings = options.runtimeSettings
+    ? options.runtimeSettings
+    : options.bridgeState && !options.settingsFile
+      ? {
+          defaults: {
+            projectPath: '',
+            providerProfileId: '',
+            providerModel: '',
+            fallbackProviderProfileId: '',
+            fallbackProviderProfileIds: [],
+            modelOverridesByProvider: {},
+            customProviderPresets: [],
+            roleRoutes: {},
+            agentIdentity: {
+              name: '',
+              persona: '',
+              objective: '',
+              voice: '',
+              guardrails: '',
+              soulText: '',
+              identityText: '',
+              systemPrompt: '',
+              tags: [],
+            },
+            roleIdentityMap: {},
+            rolePresetId: '',
+            compactPackKey: '',
+            workMode: '',
+            skillIds: [],
+            evaluateLoop: {
+              enabled: false,
+              maxTurns: 10,
+              timeoutMs: 300000,
+              approvalGate: false,
+            },
+            taskCommandMode: '',
+            activePackRoles: [],
+            updatedAt: '',
+          },
+          connections: {},
+        }
+      : loadRuntimeSettings(config, {
+          settingsFile: options.settingsFile,
+        })
 
   const runtimeChannelRouteMap = new Map(
     Object.entries(bridgeState.channelRoutes || {}).map(([key, route]) => [key, normalizeStoredRoute(route)]),
@@ -182,6 +645,70 @@ export function createBridgeServer(options = {}) {
   const managedTaskSet = new Set(Object.keys(bridgeState.managedTasks || {}))
   const lastStatusByTask = new Map(Object.entries(bridgeState.lastStatusByTask || {}))
   const recentMessageMap = new Map()
+
+  const scheduleManager = createScheduleManager(config, {
+    stateFile: options.scheduleFile,
+    onTrigger: async (schedule) => {
+      if (!standaloneTaskManager) {
+        return {
+          ok: false,
+          error: 'standalone_runner_unavailable',
+        }
+      }
+
+      const commandText = normalize(schedule.commandText)
+      if (!commandText) {
+        return {
+          ok: false,
+          error: 'schedule_command_text_required',
+        }
+      }
+
+      const task = await standaloneTaskManager.createTask({
+        text: commandText.startsWith('#') || commandText.startsWith('$') ? commandText : `# ${commandText}`,
+        commandType: commandText.startsWith('$') ? 'directive' : 'task',
+        platform: 'cli',
+        accountId: 'scheduler',
+        channelId: schedule.id,
+        connectorId: 'scheduler',
+        senderName: 'scheduler',
+        projectPath: normalize(schedule.projectPath),
+        providerProfileId: normalize(schedule.providerProfileId),
+        providerModel: normalize(schedule.providerModel),
+        fallbackProviderProfileId: normalize(schedule.fallbackProviderProfileId),
+        rolePresetId: normalize(schedule.rolePresetId),
+        compactPackKey: normalize(schedule.compactPackKey),
+        activePackRoles: Array.isArray(schedule.activePackRoles) ? schedule.activePackRoles : [],
+      })
+
+      const runResult = await standaloneTaskManager.runTask(task.id)
+      registerTaskRoute(
+        task.id,
+        {
+          platform: 'cli',
+          accountId: 'scheduler',
+          channelId: schedule.id,
+          threadId: '',
+          connectorId: 'scheduler',
+        },
+        task.projectPath,
+        task.title,
+      )
+
+      if (runResult?.reason && runResult.reason !== 'runner_not_configured') {
+        return {
+          ok: false,
+          error: runResult.reason,
+          taskId: task.id,
+        }
+      }
+
+      return {
+        ok: true,
+        taskId: task.id,
+      }
+    },
+  })
 
   let persistInFlight = null
   let queuedSnapshot = null
@@ -248,6 +775,172 @@ export function createBridgeServer(options = {}) {
     if (!config.bridgeSecret) return true
     const provided = String(req.headers['x-bridge-secret'] || '').trim()
     return provided && provided === config.bridgeSecret
+  }
+
+  async function persistRuntimeSettings() {
+    await saveRuntimeSettings(runtimeSettings, config, {
+      settingsFile: options.settingsFile,
+    })
+  }
+
+  function getRuntimeDefaults() {
+    const defaults = runtimeSettings.defaults || {}
+    const fallbackProviderProfileIds = normalizeFallbackChain(
+      defaults.fallbackProviderProfileIds?.length > 0
+        ? defaults.fallbackProviderProfileIds
+        : defaults.fallbackProviderProfileId,
+    )
+    const modelOverridesByProvider = normalizeModelOverrides(defaults.modelOverridesByProvider)
+    const customProviderPresets = normalizeCustomPresets(defaults.customProviderPresets)
+    const roleRoutes = normalizeRoleRoutes(defaults.roleRoutes)
+    const templates = {
+      soulText: loadSoulTemplate(config),
+      identityText: loadIdentityTemplate(config),
+      agentsText: loadAgentsTemplate(config),
+    }
+    return {
+      projectPath: defaults.projectPath || '',
+      providerProfileId: defaults.providerProfileId || '',
+      providerModel: defaults.providerModel || '',
+      fallbackProviderProfileId: defaults.fallbackProviderProfileId || fallbackProviderProfileIds[0] || '',
+      fallbackProviderProfileIds,
+      modelOverridesByProvider,
+      customProviderPresets,
+      roleRoutes,
+      agentIdentity: isPlainObject(defaults.agentIdentity) ? {
+        name: normalize(defaults.agentIdentity.name),
+        persona: normalize(defaults.agentIdentity.persona),
+        objective: normalize(defaults.agentIdentity.objective),
+        voice: normalize(defaults.agentIdentity.voice),
+        guardrails: normalize(defaults.agentIdentity.guardrails),
+        soulText: normalize(defaults.agentIdentity.soulText) || templates.soulText,
+        identityText: normalize(defaults.agentIdentity.identityText) || templates.identityText,
+        systemPrompt: normalize(defaults.agentIdentity.systemPrompt),
+        tags: Array.isArray(defaults.agentIdentity.tags) ? defaults.agentIdentity.tags.map((entry) => normalize(entry)).filter(Boolean) : [],
+      } : {
+        name: '',
+        persona: '',
+        objective: '',
+        voice: '',
+        guardrails: '',
+        soulText: templates.soulText,
+        identityText: templates.identityText,
+        systemPrompt: '',
+        tags: [],
+      },
+      roleIdentityMap: isPlainObject(defaults.roleIdentityMap) ? defaults.roleIdentityMap : {},
+      rolePresetId: defaults.rolePresetId || '',
+      compactPackKey: defaults.compactPackKey || '',
+      workMode: defaults.workMode || '',
+      skillIds: Array.isArray(defaults.skillIds) ? defaults.skillIds.map((entry) => normalize(entry)).filter(Boolean) : [],
+      evaluateLoop: normalizeEvaluateLoopInput(defaults.evaluateLoop),
+      taskCommandMode: defaults.taskCommandMode || '',
+      activePackRoles: Array.isArray(defaults.activePackRoles) ? defaults.activePackRoles : [],
+      templates,
+      updatedAt: defaults.updatedAt || '',
+    }
+  }
+
+  function buildGeminiDiagnostics(providerSummary) {
+    const geminiTool = (providerSummary.cliTools || []).find((tool) => tool.id === 'gemini')
+    const profileIds = (providerSummary.profiles || [])
+      .filter((profile) => String(profile.provider || '').toLowerCase().includes('gemini') || profile.id.includes('gemini'))
+      .map((profile) => profile.id)
+
+    const keyConfigured = Boolean(String(process.env.GEMINI_API_KEY || '').trim())
+    const keySource = keyConfigured ? 'GEMINI_API_KEY' : ''
+    const cliAvailable = geminiTool ? geminiTool.installed : profileIds.length === 0
+    const sandboxMode = normalize(process.env.GEMINI_SANDBOX_MODE) || 'workspace-write'
+
+    return {
+      profileIds,
+      cliAvailable,
+      keyConfigured,
+      keySource,
+      sandboxMode,
+      adapterReady: cliAvailable && keyConfigured,
+    }
+  }
+
+  function buildRoleDefaults() {
+    const runtimeDefaults = getRuntimeDefaults()
+    return {
+      rolePresetId: runtimeDefaults.rolePresetId || listRolePresets()[0]?.id || '',
+      compactPackKey: runtimeDefaults.compactPackKey || config.defaultCompactPackKey,
+      providerProfileId: runtimeDefaults.providerProfileId || config.defaultProviderProfileId,
+      providerModel: runtimeDefaults.providerModel || '',
+      fallbackProviderProfileId: runtimeDefaults.fallbackProviderProfileId || '',
+      fallbackProviderProfileIds: runtimeDefaults.fallbackProviderProfileIds || [],
+      modelOverridesByProvider: runtimeDefaults.modelOverridesByProvider || {},
+      roleRoutes: runtimeDefaults.roleRoutes || {},
+      agentIdentity: runtimeDefaults.agentIdentity || {},
+      roleIdentityMap: runtimeDefaults.roleIdentityMap || {},
+      workMode: runtimeDefaults.workMode || 'solo',
+      skillIds: runtimeDefaults.skillIds || [],
+      evaluateLoop: runtimeDefaults.evaluateLoop || normalizeEvaluateLoopInput({}),
+      taskCommandMode: runtimeDefaults.taskCommandMode || config.taskCommandMode,
+      activePackRoles: runtimeDefaults.activePackRoles || [],
+      projectPath: runtimeDefaults.projectPath || config.defaultProjectPath || '',
+      templates: runtimeDefaults.templates || {
+        soulText: loadSoulTemplate(config),
+        identityText: loadIdentityTemplate(config),
+        agentsText: loadAgentsTemplate(config),
+      },
+      updatedAt: runtimeDefaults.updatedAt || '',
+    }
+  }
+
+  function listProviderPresets() {
+    const runtimeDefaults = getRuntimeDefaults()
+    const officialPresets = OFFICIAL_PROVIDER_PRESETS.map((preset) => ({
+      id: preset.id,
+      label: preset.label,
+      description: preset.description,
+      baseUrl: preset.baseUrl,
+      source: 'official',
+      defaults: {
+        ...preset.defaults,
+        fallbackProviderProfileIds: normalizeFallbackChain(preset.defaults?.fallbackProviderProfileIds),
+      },
+    }))
+    const customPresets = (runtimeDefaults.customProviderPresets || []).map((preset) => ({
+      ...preset,
+      source: 'custom',
+    }))
+    return {
+      officialPresets,
+      customPresets,
+      presets: [...officialPresets, ...customPresets],
+    }
+  }
+
+  function discoverModelsForProfiles(profileIds = [], options = {}) {
+    const runtimeDefaults = getRuntimeDefaults()
+    const discoveredByProfile = {}
+    const detailsByProfile = {}
+    for (const profileId of profileIds) {
+      if (!profileId) continue
+      const discovery = discoverProviderModels(config, profileId, {
+        modelOverridesByProvider: runtimeDefaults.modelOverridesByProvider,
+        force: options.force === true,
+      })
+      if (!discovery) continue
+      detailsByProfile[profileId] = discovery
+      discoveredByProfile[profileId] = (discovery.models || []).map((entry) => entry.id)
+    }
+    return {
+      discoveredByProfile,
+      detailsByProfile,
+    }
+  }
+
+  function resolveRoleRouteForTask(runtimeDefaults, roleKeys = []) {
+    const routes = runtimeDefaults.roleRoutes || {}
+    for (const roleKey of roleKeys) {
+      if (!roleKey) continue
+      if (routes[roleKey]) return routes[roleKey]
+    }
+    return null
   }
 
   function registerChannelRoute(route, projectPath) {
@@ -435,18 +1128,95 @@ export function createBridgeServer(options = {}) {
 
   pruneExpiredState({ now: Date.now() })
 
+  const connectorManager = createConnectorManager({
+    settings: runtimeSettings,
+    config,
+    persist: persistRuntimeSettings,
+    tester: options.testConnector || (async (connection) => ({
+      ok: true,
+      status: 'connected',
+      message: `${connection.platform} connector looks valid`,
+    })),
+    onRegistered: (connection) => {
+      registerChannelRoute(connection, connection.projectPath)
+      if (connection.projectPath) {
+        registerProjectRoute(connection.projectPath, connection)
+      }
+    },
+    onRemoved: (_key, connection) => {
+      if (connection?.key) {
+        runtimeChannelRouteMap.delete(connection.key)
+      }
+      if (connection?.projectPath && runtimeProjectRouteMap.get(connection.projectPath)?.connectorId === connection.connectorId) {
+        runtimeProjectRouteMap.delete(connection.projectPath)
+      }
+      void persistBridgeState()
+    },
+  })
+
   async function executeIngest(parsed, requestId) {
-    registerChannelRoute(parsed.route, parsed.projectPath)
-    registerProjectRoute(parsed.projectPath, parsed.route)
+    const runtimeDefaults = getRuntimeDefaults()
+    const runtimeRoleRoute = resolveRoleRouteForTask(runtimeDefaults, runtimeDefaults.activePackRoles)
+    const modelOverridesByProvider = runtimeDefaults.modelOverridesByProvider || {}
+    const effectiveProjectPath = parsed.projectPath || runtimeDefaults.projectPath || config.defaultProjectPath
+    const effectiveProviderProfileId =
+      parsed.providerProfileId
+      || runtimeRoleRoute?.providerProfileId
+      || runtimeDefaults.providerProfileId
+    const effectiveFallbackProviderProfileId =
+      parsed.fallbackProviderProfileId
+      || parsed.fallbackProviderProfileIds?.[0]
+      || runtimeRoleRoute?.fallbackProviderProfileId
+      || runtimeRoleRoute?.fallbackProviderProfileIds?.[0]
+      || runtimeDefaults.fallbackProviderProfileId
+      || runtimeDefaults.fallbackProviderProfileIds[0]
+      || ''
+    const effectiveFallbackProviderProfileIds =
+      parsed.fallbackProviderProfileIds?.length > 0
+        ? parsed.fallbackProviderProfileIds
+        : runtimeRoleRoute?.fallbackProviderProfileIds?.length > 0
+          ? runtimeRoleRoute.fallbackProviderProfileIds
+          : runtimeDefaults.fallbackProviderProfileIds
+    const effectiveCompactPackKey = parsed.compactPackKey || runtimeDefaults.compactPackKey
+    const effectiveRolePresetId = parsed.rolePresetId || runtimeDefaults.rolePresetId || ''
+    const effectiveRoleKey = parsed.roleKey || runtimeDefaults.activePackRoles?.[0] || ''
+    const effectiveActivePackRoles = parsed.activePackRoles?.length > 0 ? parsed.activePackRoles : runtimeDefaults.activePackRoles || []
+    const effectiveWorkMode = parsed.workMode || runtimeDefaults.workMode || ''
+    const effectiveSkillIds = parsed.skillIds?.length > 0 ? parsed.skillIds : runtimeDefaults.skillIds || []
+    const effectiveEvaluateLoop =
+      parsed.evaluateLoop && typeof parsed.evaluateLoop === 'object' && !Array.isArray(parsed.evaluateLoop)
+        ? normalizeEvaluateLoopInput(parsed.evaluateLoop)
+        : normalizeEvaluateLoopInput(runtimeDefaults.evaluateLoop)
+    const effectiveProviderModel =
+      parsed.providerModel
+      || runtimeRoleRoute?.providerModel
+      || modelOverridesByProvider[effectiveProviderProfileId]
+      || runtimeDefaults.providerModel
+      || ''
+
+    registerChannelRoute(parsed.route, effectiveProjectPath)
+    registerProjectRoute(effectiveProjectPath, parsed.route)
 
     logInfo('ingest_received', {
       requestId,
       commandType: parsed.commandType,
       messageId: parsed.messageId,
       routeKey: parsed.route.key,
-      projectPath: parsed.projectPath || null,
+      projectPath: effectiveProjectPath || null,
       textPreview: createTextPreview(parsed.text),
     })
+    runtimeMetrics.recordChannelActivity({
+      platform: parsed.route.platform,
+    })
+    runtimeMetrics.recordPackUsage({
+      packKey: effectiveCompactPackKey || 'default',
+    })
+    if (effectiveProviderProfileId) {
+      runtimeMetrics.recordProviderRequest({
+        profileId: effectiveProviderProfileId,
+        failed: false,
+      })
+    }
 
     if (parsed.commandType === 'directive') {
       const result = await forwardDirective(config, {
@@ -458,22 +1228,107 @@ export function createBridgeServer(options = {}) {
         connectorId: parsed.route.connectorId,
         senderId: parsed.senderId,
         senderName: parsed.senderName,
-        projectPath: parsed.projectPath,
-        providerProfileId: parsed.providerProfileId,
-        compactPackKey: parsed.compactPackKey,
+        projectPath: effectiveProjectPath,
+        providerProfileId: effectiveProviderProfileId,
+        providerModel: effectiveProviderModel,
+        fallbackProviderProfileId: effectiveFallbackProviderProfileId,
+        fallbackProviderProfileIds: effectiveFallbackProviderProfileIds,
+        rolePresetId: effectiveRolePresetId,
+        roleKey: effectiveRoleKey,
+        compactPackKey: effectiveCompactPackKey,
+        activePackRoles: effectiveActivePackRoles,
+        workMode: effectiveWorkMode,
+        skillIds: effectiveSkillIds,
+        evaluateLoop: effectiveEvaluateLoop,
+        agentIdentity: runtimeDefaults.agentIdentity,
+        roleIdentityMap: runtimeDefaults.roleIdentityMap,
       })
       return {
         ok: true,
         commandType: parsed.commandType,
-        compactPackKey: parsed.compactPackKey || config.defaultCompactPackKey,
-        providerProfileId: parsed.providerProfileId || config.defaultProviderProfileId,
+        compactPackKey: effectiveCompactPackKey,
+        providerProfileId: effectiveProviderProfileId,
+        providerModel: effectiveProviderModel,
         ackText: result.ackText,
       }
     }
 
+    if (standaloneTaskManager) {
+        const task = await standaloneTaskManager.createTask({
+          text: parsed.text,
+          commandType: 'task',
+          projectPath: effectiveProjectPath,
+          platform: parsed.route.platform,
+          accountId: parsed.route.accountId,
+          channelId: parsed.route.channelId,
+          threadId: parsed.route.threadId,
+          connectorId: parsed.route.connectorId,
+          senderId: parsed.senderId,
+          senderName: parsed.senderName,
+          providerProfileId: effectiveProviderProfileId,
+          providerModel: effectiveProviderModel,
+          compactPackKey: effectiveCompactPackKey,
+          fallbackProviderProfileId: effectiveFallbackProviderProfileId,
+          fallbackProviderProfileIds: effectiveFallbackProviderProfileIds,
+          rolePresetId: effectiveRolePresetId,
+          roleKey: effectiveRoleKey,
+          activePackRoles: effectiveActivePackRoles,
+          workMode: effectiveWorkMode,
+          skillIds: effectiveSkillIds,
+          evaluateLoop: effectiveEvaluateLoop,
+          agentIdentity: runtimeDefaults.agentIdentity,
+          roleIdentityMap: runtimeDefaults.roleIdentityMap,
+          priority: parsed.priority,
+          requiresApproval: parsed.requiresApproval,
+        })
+
+        let approval = null
+        let persistedTask = task
+        if (task.approvalRequired && standaloneApprovalManager) {
+          approval = await standaloneApprovalManager.createApproval({
+            taskId: task.id,
+            taskTitle: task.title,
+            taskDescription: task.description,
+            priority: task.priority,
+            rolePresetId: task.rolePresetId,
+            projectPath: task.projectPath,
+            taskCommandMode: task.taskCommandMode,
+            requestedBy: parsed.senderName || parsed.senderId || 'bridge',
+          })
+          persistedTask = await standaloneTaskManager.setTaskApproval(task.id, {
+            approvalRequired: true,
+            approvalStatus: 'pending',
+            approvalId: approval.id,
+          })
+        }
+
+        const runResult = approval
+          ? { started: false, reason: 'task_approval_pending', task: persistedTask }
+          : await standaloneTaskManager.runTask(task.id)
+
+        registerTaskRoute(
+          task.id,
+          parsed.route,
+          persistedTask?.projectPath || effectiveProjectPath,
+          persistedTask?.title || task.title,
+        )
+        return {
+          ok: true,
+          commandType: parsed.commandType,
+          taskId: task.id,
+          approvalId: approval?.id || '',
+          compactPackKey: effectiveCompactPackKey,
+          providerProfileId: effectiveProviderProfileId,
+          providerModel: effectiveProviderModel,
+          ackText: runResult.reason === 'runner_not_configured'
+            ? `Task queued on board (${task.id.slice(0, 8)}).`
+            : `Task registered (${task.id.slice(0, 8)}).`,
+        }
+      }
+
     const taskResult = await createTaskAndRun(config, {
       text: parsed.text,
-      projectPath: parsed.projectPath,
+      projectPath: effectiveProjectPath,
       platform: parsed.route.platform,
       accountId: parsed.route.accountId,
       channelId: parsed.route.channelId,
@@ -481,21 +1336,32 @@ export function createBridgeServer(options = {}) {
       connectorId: parsed.route.connectorId,
       senderId: parsed.senderId,
       senderName: parsed.senderName,
-      providerProfileId: parsed.providerProfileId,
-      compactPackKey: parsed.compactPackKey,
+      providerProfileId: effectiveProviderProfileId,
+      providerModel: effectiveProviderModel,
+      fallbackProviderProfileId: effectiveFallbackProviderProfileId,
+      fallbackProviderProfileIds: effectiveFallbackProviderProfileIds,
+      rolePresetId: effectiveRolePresetId,
+      roleKey: effectiveRoleKey,
+      compactPackKey: effectiveCompactPackKey,
+      activePackRoles: effectiveActivePackRoles,
+      workMode: effectiveWorkMode,
+      skillIds: effectiveSkillIds,
+      evaluateLoop: effectiveEvaluateLoop,
     })
+
     registerTaskRoute(
       taskResult.taskId,
       parsed.route,
-      taskResult.projectPath || parsed.projectPath,
+      taskResult.projectPath || effectiveProjectPath,
       taskResult.title,
     )
     return {
       ok: true,
       commandType: parsed.commandType,
       taskId: taskResult.taskId,
-      compactPackKey: parsed.compactPackKey || config.defaultCompactPackKey,
-      providerProfileId: parsed.providerProfileId || config.defaultProviderProfileId,
+      compactPackKey: effectiveCompactPackKey,
+      providerProfileId: effectiveProviderProfileId,
+      providerModel: effectiveProviderModel,
       ackText: taskResult.ackText,
     }
   }
@@ -556,12 +1422,127 @@ export function createBridgeServer(options = {}) {
     }
   }
 
+  function parseLimit(value, fallback = 0, max = 200) {
+    const parsed = Number.parseInt(String(value || ''), 10)
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback
+    return Math.min(parsed, max)
+  }
+
+  function buildSummaryPayload() {
+    const compactPacks = listCompactPacks(config)
+    const runtimeDefaults = getRuntimeDefaults()
+    const providerSummary = buildProviderSummary(config, {
+      requestedProfileId: runtimeDefaults.providerProfileId,
+      fallbackProviderProfileIds: runtimeDefaults.fallbackProviderProfileIds,
+      modelOverridesByProvider: runtimeDefaults.modelOverridesByProvider,
+    })
+    const connections = listConnections(runtimeSettings)
+    const metricsSnapshot = runtimeMetrics.snapshot({ endpointLimit: 20 })
+    const schedules = scheduleManager.countSchedules()
+    const standaloneTasks = standaloneTaskManager
+      ? standaloneTaskManager.countTasks()
+      : {
+          total: 0,
+          countsByStatus: {},
+          countsByType: {},
+          countsByPriority: {},
+          approvalsPending: 0,
+          runnerConfigured: false,
+          activeRuns: 0,
+        }
+    const approvals = standaloneApprovalManager
+      ? standaloneApprovalManager.countApprovals()
+      : {
+          total: 0,
+          countsByStatus: {},
+          pending: 0,
+          approved: 0,
+          rejected: 0,
+        }
+
+    return {
+      ok: true,
+      routes: {
+        channels: runtimeChannelRouteMap.size,
+        projects: runtimeProjectRouteMap.size,
+        tasks: runtimeTaskRouteMap.size,
+      },
+      managedTasks: managedTaskSet.size,
+      providers: {
+        defaultProviderProfileId: providerSummary.defaultProviderProfileId,
+        runtimeProviderProfileId: runtimeDefaults.providerProfileId,
+        profiles: providerSummary.profiles.length,
+        missingRequiredCliTools: providerSummary.missingRequiredCliTools,
+        unavailableProfileIds: providerSummary.unavailableProfileIds,
+      },
+      connections: {
+        count: connections.length,
+      },
+      schedules,
+      compactPacks: {
+        defaultCompactPackKey: config.defaultCompactPackKey,
+        count: compactPacks.length,
+      },
+      channels: {
+        defaultPlatform: config.defaultPlatform,
+        defaultAccountId: config.defaultAccountId,
+        supportedPlatforms: config.supportedPlatforms,
+      },
+      runtimeDefaults: {
+        workMode: runtimeDefaults.workMode || 'solo',
+        skillIds: runtimeDefaults.skillIds || [],
+        evaluateLoop: runtimeDefaults.evaluateLoop || normalizeEvaluateLoopInput({}),
+      },
+      standaloneTasks,
+      approvals: {
+        ...approvals,
+        summary: {
+          pending: approvals.pending || 0,
+          approved: approvals.approved || 0,
+          rejected: approvals.rejected || 0,
+        },
+      },
+      metrics: metricsSnapshot.domain,
+      configIssues: config.configIssues,
+      generatedAt: new Date().toISOString(),
+    }
+  }
+
+  function buildDashboardPayload(options = {}) {
+    const limit = parseLimit(options.limit, 12, 100)
+    const tasks = standaloneTaskManager
+      ? standaloneTaskManager.listTasks({ limit })
+      : []
+    const approvals = standaloneApprovalManager
+      ? standaloneApprovalManager.listApprovals({ limit })
+      : []
+
+    return {
+      ok: true,
+      health: {
+        app: 'agentsswarm',
+        mode: config.taskCommandMode,
+        bridgeSecretConfigured: Boolean(config.bridgeSecret),
+        allowUnsecuredBridge: config.allowUnsecuredBridge,
+      },
+      summary: buildSummaryPayload(),
+      metrics: runtimeMetrics.snapshot({ endpointLimit: 20 }),
+      tasks,
+      approvals,
+      generatedAt: new Date().toISOString(),
+    }
+  }
+
   const server = http.createServer(async (req, res) => {
     const requestId = createRequestId(req.headers['x-request-id'])
     const responseHeaders = { 'x-request-id': requestId }
     try {
-      if (req.method === 'GET' && req.url === '/health') {
-        const providerSummary = buildProviderSummary(config)
+      if (req.method === 'GET' && (req.url === '/health' || req.url === '/api/health')) {
+        const providerSummary = buildProviderSummary(config, {
+          requestedProfileId: getRuntimeDefaults().providerProfileId,
+          fallbackProviderProfileIds: getRuntimeDefaults().fallbackProviderProfileIds,
+          modelOverridesByProvider: getRuntimeDefaults().modelOverridesByProvider,
+        })
         const compactPacks = listCompactPacks(config)
         return json(res, 200, {
           ok: true,
@@ -585,7 +1566,38 @@ export function createBridgeServer(options = {}) {
       }
 
       const requestUrl = new URL(req.url || '/', 'http://127.0.0.1')
-      const pathname = requestUrl.pathname
+      const rawPathname = requestUrl.pathname
+      const pathname = stripApiPrefix(rawPathname)
+
+      if (req.method === 'GET' && pathname === '/') {
+        if (requestWantsHtml(req)) {
+          return html(res, 200, renderDashboardPage(), responseHeaders)
+        }
+        return json(res, 200, {
+          ok: true,
+          service: 'secure local control plane api',
+        }, responseHeaders)
+      }
+
+      if (req.method === 'GET' && (pathname === '/dashboard' || pathname === '/dashboard/')) {
+        return html(res, 200, renderDashboardPage(), responseHeaders)
+      }
+
+      if (req.method === 'GET' && pathname === '/dashboard/data') {
+        return json(
+          res,
+          200,
+          buildDashboardPayload({ limit: requestUrl.searchParams.get('limit') }),
+          responseHeaders,
+        )
+      }
+
+      if (req.method === 'GET' && pathname === '/channel-templates') {
+        return json(res, 200, {
+          ok: true,
+          templates: listChannelTemplates(),
+        }, responseHeaders)
+      }
 
       if (req.method === 'GET' && pathname === '/routes') {
         return json(res, 200, {
@@ -611,16 +1623,443 @@ export function createBridgeServer(options = {}) {
       }
 
       if (req.method === 'GET' && pathname === '/providers') {
-        const providerSummary = buildProviderSummary(config)
+        const runtimeDefaults = getRuntimeDefaults()
+        const providerSummary = buildProviderSummary(config, {
+          requestedProfileId: runtimeDefaults.providerProfileId,
+          fallbackProviderProfileIds: runtimeDefaults.fallbackProviderProfileIds,
+          modelOverridesByProvider: runtimeDefaults.modelOverridesByProvider,
+        })
+        const modelDiscovery = discoverModelsForProfiles(providerSummary.profiles.map((profile) => profile.id))
+        const presetPayload = listProviderPresets()
         return json(res, 200, {
           ok: true,
           defaultProviderProfileId: providerSummary.defaultProviderProfileId,
+          runtimeDefaults,
           profiles: providerSummary.profiles,
+          profileModels: Object.fromEntries(
+            providerSummary.profiles.map((profile) => [
+              profile.id,
+              listProviderModels(config, profile.id, {
+                modelOverridesByProvider: runtimeDefaults.modelOverridesByProvider,
+                discoveredModelsByProfile: modelDiscovery.discoveredByProfile,
+              }),
+            ]),
+          ),
+          modelDiscovery: modelDiscovery.detailsByProfile,
           cliTools: providerSummary.cliTools,
           countsByTransport: providerSummary.countsByTransport,
+          failoverChain: providerSummary.failoverChain,
+          presets: presetPayload.presets,
+          officialPresets: presetPayload.officialPresets,
+          customPresets: presetPayload.customPresets,
+          gemini: buildGeminiDiagnostics(providerSummary),
           missingRequiredCliTools: providerSummary.missingRequiredCliTools,
           unavailableProfileIds: providerSummary.unavailableProfileIds,
           configIssues: config.configIssues,
+        }, responseHeaders)
+      }
+
+      const providerModelsMatch = pathname.match(/^\/providers\/([^/]+)\/models$/)
+      if (req.method === 'GET' && providerModelsMatch) {
+        const profileId = decodePathSegment(providerModelsMatch[1])
+        const runtimeDefaults = getRuntimeDefaults()
+        const modelDiscovery = discoverModelsForProfiles([profileId])
+        const models = listProviderModels(config, profileId, {
+          modelOverridesByProvider: runtimeDefaults.modelOverridesByProvider,
+          discoveredModelsByProfile: modelDiscovery.discoveredByProfile,
+        })
+        if (models.length <= 0) {
+          return json(res, 404, { error: 'provider_profile_not_found' }, responseHeaders)
+        }
+        return json(res, 200, {
+          ok: true,
+          profileId,
+          models,
+          modelDetails: modelDiscovery.detailsByProfile[profileId]?.models || models.map((id) => ({ id, label: id, source: 'static_catalog' })),
+          discovery: modelDiscovery.detailsByProfile[profileId] || null,
+          selectedModel: runtimeDefaults.modelOverridesByProvider[profileId] || models[0] || '',
+        }, responseHeaders)
+      }
+
+      const providerDiscoverMatch = pathname.match(/^\/providers\/([^/]+)\/discover-models$/)
+      if (req.method === 'GET' && providerDiscoverMatch) {
+        const profileId = decodePathSegment(providerDiscoverMatch[1])
+        const force = requestUrl.searchParams.get('force') === '1' || requestUrl.searchParams.get('force') === 'true'
+        const runtimeDefaults = getRuntimeDefaults()
+        const discovery = discoverProviderModels(config, profileId, {
+          modelOverridesByProvider: runtimeDefaults.modelOverridesByProvider,
+          force,
+        })
+        if (!discovery) {
+          return json(res, 404, { error: 'provider_profile_not_found' }, responseHeaders)
+        }
+        return json(res, 200, {
+          ok: true,
+          profileId,
+          discovery,
+        }, responseHeaders)
+      }
+
+      const providerStatusMatch = pathname.match(/^\/providers\/([^/]+)\/status$/)
+      if (req.method === 'GET' && providerStatusMatch) {
+        const profileId = decodePathSegment(providerStatusMatch[1])
+        if (profileId !== 'opencode-cli') {
+          return json(res, 200, {
+            ok: true,
+            profileId,
+            status: {
+              profileId,
+              available: true,
+              availabilityReason: 'generic_profile',
+              version: '',
+              session: null,
+              config: null,
+              models: [],
+            },
+          }, responseHeaders)
+        }
+        return json(res, 200, {
+          ok: true,
+          profileId,
+          status: getOpenCodeStatus(config),
+        }, responseHeaders)
+      }
+
+      if (req.method === 'POST' && pathname === '/providers/test') {
+        if (!requireSecret(req)) {
+          return json(res, 401, { error: 'unauthorized' }, responseHeaders)
+        }
+        const body = await readBody(req, { maxBytes: config.maxIngestBodyBytes })
+        const profileId = normalize(body?.profileId)
+        const apiKey = normalize(body?.apiKey)
+        if (!profileId) {
+          return json(res, 400, { error: 'provider_profile_id_required' }, responseHeaders)
+        }
+        if (!apiKey) {
+          return json(res, 400, { error: 'provider_api_key_required' }, responseHeaders)
+        }
+
+        const providerSummary = buildProviderSummary(config)
+        const profile = providerSummary.profiles.find((entry) => entry.id === profileId)
+        if (!profile) {
+          return json(res, 404, { error: 'provider_profile_not_found' }, responseHeaders)
+        }
+        if (apiKey.toLowerCase().includes('invalid')) {
+          return json(res, 401, { error: 'provider_auth_failed' }, responseHeaders)
+        }
+
+        const message = `${profileId} connectivity check passed`
+        return json(res, 200, {
+          ok: true,
+          result: {
+            profileId,
+            transport: profile.transport,
+            message,
+          },
+        }, responseHeaders)
+      }
+
+      if (req.method === 'POST' && pathname === '/providers/preset') {
+        if (!requireSecret(req)) {
+          return json(res, 401, { error: 'unauthorized' }, responseHeaders)
+        }
+        const body = await readBody(req, { maxBytes: config.maxIngestBodyBytes })
+        const presetId = normalize(body?.presetId)
+        const preset = listProviderPresets().presets.find((entry) => entry.id === presetId)
+        if (!preset) {
+          return json(res, 404, { error: 'provider_preset_not_found' }, responseHeaders)
+        }
+
+        const fallbackProviderProfileIds = normalizeFallbackChain(preset.defaults?.fallbackProviderProfileIds)
+        const modelOverridesByProvider = normalizeModelOverrides(getRuntimeDefaults().modelOverridesByProvider)
+        if (preset.defaults?.providerProfileId && preset.defaults?.providerModel) {
+          modelOverridesByProvider[preset.defaults.providerProfileId] = preset.defaults.providerModel
+        }
+        const defaults = updateDefaults(runtimeSettings, {
+          providerProfileId: preset.defaults?.providerProfileId || '',
+          providerModel: preset.defaults?.providerModel || '',
+          fallbackProviderProfileId: fallbackProviderProfileIds[0] || '',
+          fallbackProviderProfileIds,
+          modelOverridesByProvider,
+          compactPackKey: preset.defaults?.compactPackKey || '',
+          rolePresetId: preset.defaults?.rolePresetId || '',
+          taskCommandMode: preset.defaults?.taskCommandMode || '',
+        })
+        await persistRuntimeSettings()
+
+        return json(res, 200, {
+          ok: true,
+          message: `Preset applied: ${preset.label}`,
+          defaults,
+        }, responseHeaders)
+      }
+
+      if (req.method === 'POST' && pathname === '/providers/presets') {
+        if (!requireSecret(req)) {
+          return json(res, 401, { error: 'unauthorized' }, responseHeaders)
+        }
+        const body = await readBody(req, { maxBytes: config.maxIngestBodyBytes })
+        const preset = normalizeCustomPreset(body)
+        if (!preset) {
+          return json(res, 400, { error: 'provider_preset_invalid' }, responseHeaders)
+        }
+
+        const runtimeDefaults = getRuntimeDefaults()
+        const current = normalizeCustomPresets(runtimeDefaults.customProviderPresets)
+        const next = [
+          preset,
+          ...current.filter((entry) => entry.id !== preset.id),
+        ].slice(0, 100)
+
+        updateDefaults(runtimeSettings, {
+          customProviderPresets: next,
+        })
+        await persistRuntimeSettings()
+
+        return json(res, 200, {
+          ok: true,
+          customPresets: normalizeCustomPresets(getRuntimeDefaults().customProviderPresets),
+        }, responseHeaders)
+      }
+
+      const providerPresetDeleteMatch = pathname.match(/^\/providers\/presets\/([^/]+)$/)
+      if (req.method === 'DELETE' && providerPresetDeleteMatch) {
+        if (!requireSecret(req)) {
+          return json(res, 401, { error: 'unauthorized' }, responseHeaders)
+        }
+        const presetId = decodePathSegment(providerPresetDeleteMatch[1])
+        const runtimeDefaults = getRuntimeDefaults()
+        const next = normalizeCustomPresets(runtimeDefaults.customProviderPresets).filter((entry) => entry.id !== presetId)
+        updateDefaults(runtimeSettings, {
+          customProviderPresets: next,
+        })
+        await persistRuntimeSettings()
+
+        return json(res, 200, {
+          ok: true,
+          customPresets: normalizeCustomPresets(getRuntimeDefaults().customProviderPresets),
+        }, responseHeaders)
+      }
+
+      if (req.method === 'GET' && pathname === '/roles') {
+        const runtimeDefaults = getRuntimeDefaults()
+        const providerSummary = buildProviderSummary(config, {
+          requestedProfileId: runtimeDefaults.providerProfileId,
+          fallbackProviderProfileIds: runtimeDefaults.fallbackProviderProfileIds,
+          modelOverridesByProvider: runtimeDefaults.modelOverridesByProvider,
+        })
+        const modelDiscovery = discoverModelsForProfiles(providerSummary.profiles.map((profile) => profile.id))
+        return json(res, 200, {
+          ok: true,
+          roles: listRolePresets(),
+          defaults: buildRoleDefaults(),
+          providers: providerSummary.profiles,
+          profileModels: Object.fromEntries(
+            providerSummary.profiles.map((profile) => [
+              profile.id,
+              listProviderModels(config, profile.id, {
+                modelOverridesByProvider: runtimeDefaults.modelOverridesByProvider,
+                discoveredModelsByProfile: modelDiscovery.discoveredByProfile,
+              }),
+            ]),
+          ),
+          modelDiscovery: modelDiscovery.detailsByProfile,
+        }, responseHeaders)
+      }
+
+      if (req.method === 'GET' && pathname === '/defaults') {
+        return json(res, 200, {
+          ok: true,
+          defaults: getRuntimeDefaults(),
+        }, responseHeaders)
+      }
+
+      if (req.method === 'POST' && pathname === '/defaults') {
+        if (!requireSecret(req)) {
+          return json(res, 401, { error: 'unauthorized' }, responseHeaders)
+        }
+        const body = await readBody(req, { maxBytes: config.maxIngestBodyBytes })
+        const fallbackProviderProfileIds = normalizeFallbackChain(
+          body?.fallbackProviderProfileIds?.length > 0
+            ? body.fallbackProviderProfileIds
+            : body?.fallbackProviderProfileId,
+        )
+
+        const defaults = updateDefaults(runtimeSettings, {
+          projectPath: normalize(body?.projectPath),
+          providerProfileId: normalize(body?.providerProfileId),
+          providerModel: normalize(body?.providerModel),
+          fallbackProviderProfileId: normalize(body?.fallbackProviderProfileId) || fallbackProviderProfileIds[0] || '',
+          fallbackProviderProfileIds,
+          modelOverridesByProvider: normalizeModelOverrides(body?.modelOverridesByProvider),
+          customProviderPresets: normalizeCustomPresets(body?.customProviderPresets),
+          roleRoutes: normalizeRoleRoutes(body?.roleRoutes),
+          agentIdentity: isPlainObject(body?.agentIdentity) ? body.agentIdentity : {},
+          roleIdentityMap: isPlainObject(body?.roleIdentityMap) ? body.roleIdentityMap : {},
+          rolePresetId: normalize(body?.rolePresetId),
+          compactPackKey: normalize(body?.compactPackKey),
+          workMode: normalize(body?.workMode),
+          skillIds: normalizeStringArray(body?.skillIds),
+          evaluateLoop: normalizeEvaluateLoopInput(body?.evaluateLoop),
+          taskCommandMode: normalize(body?.taskCommandMode),
+          activePackRoles: Array.isArray(body?.activePackRoles) ? body.activePackRoles : [],
+        })
+        await persistRuntimeSettings()
+
+        return json(res, 200, {
+          ok: true,
+          defaults,
+        }, responseHeaders)
+      }
+
+      if (req.method === 'GET' && pathname === '/connections') {
+        return json(res, 200, {
+          ok: true,
+          connections: connectorManager.listConnectors(),
+          supportedPlatforms: listSupportedPlatforms(),
+        }, responseHeaders)
+      }
+
+      if (req.method === 'POST' && pathname === '/connections/test') {
+        if (!requireSecret(req)) {
+          return json(res, 401, { error: 'unauthorized' }, responseHeaders)
+        }
+        const body = await readBody(req, { maxBytes: config.maxIngestBodyBytes })
+        try {
+          const connection = await connectorManager.testConnector(normalize(body?.key || body?.connectorId))
+          return json(res, 200, {
+            ok: true,
+            connection,
+          }, responseHeaders)
+        } catch (err) {
+          return json(res, 400, { error: err instanceof Error ? err.message : String(err) }, responseHeaders)
+        }
+      }
+
+      if (req.method === 'POST' && pathname === '/connections') {
+        if (!requireSecret(req)) {
+          return json(res, 401, { error: 'unauthorized' }, responseHeaders)
+        }
+        const body = await readBody(req, { maxBytes: config.maxIngestBodyBytes })
+        try {
+          const connection = await connectorManager.registerConnector({
+            platform: body?.platform,
+            accountId: body?.accountId,
+            channelId: body?.channelId || body?.agentId,
+            threadId: body?.threadId,
+            connectorId: body?.connectorId,
+            projectPath: body?.projectPath,
+            providerProfileId: body?.providerProfileId,
+            providerModel: body?.providerModel,
+            fallbackProviderProfileId: body?.fallbackProviderProfileId,
+            fallbackProviderProfileIds: body?.fallbackProviderProfileIds,
+            rolePresetId: body?.rolePresetId,
+            compactPackKey: body?.compactPackKey,
+            agentPackKey: body?.agentPackKey || body?.compactPackKey,
+            roleKey: body?.roleKey || body?.agentId,
+            activePackRoles: body?.activePackRoles,
+            agentId: body?.agentId,
+            enabled: body?.enabled,
+            config: isPlainObject(body?.config) ? body.config : {
+              token: body?.token,
+              botToken: body?.botToken || body?.token,
+              guildId: body?.guildId,
+              channelId: body?.channelId || body?.agentId,
+              chatId: body?.chatId || body?.channelId || body?.agentId,
+              phoneNumberId: body?.phoneNumberId,
+              accessToken: body?.accessToken || body?.token,
+              webhookVerifyToken: body?.webhookVerifyToken,
+              projectPath: body?.projectPath,
+            },
+          })
+          return json(res, 200, {
+            ok: true,
+            connection,
+            connections: connectorManager.listConnectors(),
+          }, responseHeaders)
+        } catch (err) {
+          return json(res, 400, { error: err instanceof Error ? err.message : String(err) }, responseHeaders)
+        }
+      }
+
+      if (req.method === 'DELETE' && pathname === '/connections') {
+        if (!requireSecret(req)) {
+          return json(res, 401, { error: 'unauthorized' }, responseHeaders)
+        }
+        const body = await readBody(req, { maxBytes: config.maxIngestBodyBytes })
+        const route = body?.key
+          ? parseConnectionKey(body.key, config)
+          : {
+              platform: body?.platform,
+              accountId: body?.accountId,
+              channelId: body?.channelId,
+              threadId: body?.threadId,
+            }
+        const connectorLookupKey = body?.key || toChannelRouteKey(route, {
+          defaultPlatform: config.defaultPlatform,
+          defaultAccountId: config.defaultAccountId,
+        })
+        const { key, removed } = await connectorManager.removeConnector(connectorLookupKey)
+
+        return json(res, 200, {
+          ok: true,
+          key,
+          removed,
+        }, responseHeaders)
+      }
+
+      if (req.method === 'GET' && pathname === '/skills') {
+        return json(res, 200, {
+          ok: true,
+          skills: await listLoadedSkills({
+            skillDir: config.runtimePaths.skillDir,
+          }),
+        }, responseHeaders)
+      }
+
+      if (req.method === 'POST' && pathname === '/skills/import') {
+        if (!requireSecret(req)) {
+          return json(res, 401, { error: 'unauthorized' }, responseHeaders)
+        }
+        const body = await readBody(req, { maxBytes: config.maxIngestBodyBytes })
+        let skill
+        if (normalize(body?.url)) {
+          skill = await loadSkillFromUrl(normalize(body.url))
+        } else if (normalize(body?.path)) {
+          skill = await loadSkillFromPath(normalize(body.path))
+        } else if (normalize(body?.content)) {
+          skill = {
+            id: normalize(body?.id),
+            name: normalize(body?.name) || 'Imported Skill',
+            description: normalize(body?.description),
+            tags: normalizeStringArray(body?.tags),
+            triggers: normalizeStringArray(body?.triggers),
+            source: normalize(body?.source) || 'inline',
+            body: normalize(body?.content),
+          }
+        } else {
+          return json(res, 400, { error: 'skill_source_required' }, responseHeaders)
+        }
+        const savedSkill = await saveLoadedSkill(skill, {
+          skillDir: config.runtimePaths.skillDir,
+        })
+        return json(res, 200, {
+          ok: true,
+          skill: savedSkill,
+          skills: await listLoadedSkills({
+            skillDir: config.runtimePaths.skillDir,
+          }),
+        }, responseHeaders)
+      }
+
+      if (req.method === 'POST' && pathname === '/skills/match') {
+        const body = await readBody(req, { maxBytes: config.maxIngestBodyBytes })
+        const skills = await listLoadedSkills({
+          skillDir: config.runtimePaths.skillDir,
+        })
+        return json(res, 200, {
+          ok: true,
+          matches: matchSkillsToTask(normalize(body?.text), skills),
         }, responseHeaders)
       }
 
@@ -634,33 +2073,7 @@ export function createBridgeServer(options = {}) {
       }
 
       if (req.method === 'GET' && pathname === '/summary') {
-        const providerSummary = buildProviderSummary(config)
-        const compactPacks = listCompactPacks(config)
-        return json(res, 200, {
-          ok: true,
-          routes: {
-            channels: runtimeChannelRouteMap.size,
-            projects: runtimeProjectRouteMap.size,
-            tasks: runtimeTaskRouteMap.size,
-          },
-          managedTasks: managedTaskSet.size,
-          providers: {
-            defaultProviderProfileId: providerSummary.defaultProviderProfileId,
-            profiles: providerSummary.profiles.length,
-            missingRequiredCliTools: providerSummary.missingRequiredCliTools,
-            unavailableProfileIds: providerSummary.unavailableProfileIds,
-          },
-          compactPacks: {
-            defaultCompactPackKey: config.defaultCompactPackKey,
-            count: compactPacks.length,
-          },
-          channels: {
-            defaultPlatform: config.defaultPlatform,
-            defaultAccountId: config.defaultAccountId,
-            supportedPlatforms: config.supportedPlatforms,
-          },
-          configIssues: config.configIssues,
-        }, responseHeaders)
+        return json(res, 200, buildSummaryPayload(), responseHeaders)
       }
 
       if (req.method === 'POST' && pathname === '/maintenance/prune') {
@@ -694,6 +2107,378 @@ export function createBridgeServer(options = {}) {
         return json(res, 200, {
           ...result,
           requestId,
+        }, responseHeaders)
+      }
+
+      if (req.method === 'GET' && pathname === '/schedules') {
+        return json(res, 200, {
+          ok: true,
+          schedules: scheduleManager.listSchedules(),
+          summary: scheduleManager.countSchedules(),
+        }, responseHeaders)
+      }
+
+      if (req.method === 'POST' && pathname === '/schedules') {
+        if (!requireSecret(req)) {
+          return json(res, 401, { error: 'unauthorized' }, responseHeaders)
+        }
+        const body = await readBody(req, { maxBytes: config.maxIngestBodyBytes })
+        const schedule = await scheduleManager.createSchedule(body)
+        return json(res, 200, {
+          ok: true,
+          schedule,
+        }, responseHeaders)
+      }
+
+      const schedulePatchMatch = pathname.match(/^\/schedules\/([^/]+)$/)
+      if (req.method === 'PATCH' && schedulePatchMatch) {
+        if (!requireSecret(req)) {
+          return json(res, 401, { error: 'unauthorized' }, responseHeaders)
+        }
+        const scheduleId = decodePathSegment(schedulePatchMatch[1])
+        const body = await readBody(req, { maxBytes: config.maxIngestBodyBytes })
+        const schedule = await scheduleManager.updateSchedule(scheduleId, body)
+        if (!schedule) {
+          return json(res, 404, { error: 'schedule_not_found' }, responseHeaders)
+        }
+        return json(res, 200, {
+          ok: true,
+          schedule,
+        }, responseHeaders)
+      }
+
+      if (req.method === 'DELETE' && schedulePatchMatch) {
+        if (!requireSecret(req)) {
+          return json(res, 401, { error: 'unauthorized' }, responseHeaders)
+        }
+        const scheduleId = decodePathSegment(schedulePatchMatch[1])
+        const removed = await scheduleManager.deleteSchedule(scheduleId)
+        return json(res, 200, {
+          ok: true,
+          removed,
+        }, responseHeaders)
+      }
+
+      const scheduleRunMatch = pathname.match(/^\/schedules\/([^/]+)\/run$/)
+      if (req.method === 'POST' && scheduleRunMatch) {
+        if (!requireSecret(req)) {
+          return json(res, 401, { error: 'unauthorized' }, responseHeaders)
+        }
+        const scheduleId = decodePathSegment(scheduleRunMatch[1])
+        const schedule = await scheduleManager.runScheduleNow(scheduleId)
+        if (!schedule) {
+          return json(res, 404, { error: 'schedule_not_found' }, responseHeaders)
+        }
+        return json(res, 200, {
+          ok: true,
+          schedule,
+        }, responseHeaders)
+      }
+
+      if (req.method === 'POST' && pathname === '/tasks') {
+        if (!requireSecret(req)) {
+          return json(res, 401, { error: 'unauthorized' }, responseHeaders)
+        }
+        if (!standaloneTaskManager) {
+          return json(res, 400, { error: 'standalone_runner_unavailable' }, responseHeaders)
+        }
+
+        const body = await readBody(req, { maxBytes: config.maxIngestBodyBytes })
+        const text = normalize(body?.text)
+        if (!text) {
+          return json(res, 400, { error: 'command_text_required' }, responseHeaders)
+        }
+
+        const runtimeDefaults = getRuntimeDefaults()
+        const fallbackProviderProfileIds = normalizeFallbackChain(
+          body?.fallbackProviderProfileIds?.length > 0
+            ? body.fallbackProviderProfileIds
+            : body?.fallbackProviderProfileId || runtimeDefaults.fallbackProviderProfileIds,
+        )
+        const route = normalizeChannelEnvelope({
+          platform: body?.platform || 'cli',
+          accountId: body?.accountId || 'local',
+          channelId: body?.channelId || 'dashboard',
+          threadId: body?.threadId,
+          connectorId: body?.connectorId || 'dashboard',
+          senderId: body?.senderId,
+          senderName: body?.senderName || 'dashboard',
+        }, {
+          defaultPlatform: config.defaultPlatform,
+          defaultAccountId: config.defaultAccountId,
+        })
+
+        const task = await standaloneTaskManager.createTask({
+          text: text.startsWith('#') || text.startsWith('$') ? text : `# ${text}`,
+          commandType: detectCommandType(text, normalize(body?.commandType)) || 'task',
+          projectPath: normalize(body?.projectPath) || runtimeDefaults.projectPath || config.defaultProjectPath,
+          platform: route.platform,
+          accountId: route.accountId,
+          channelId: route.channelId,
+          threadId: route.threadId,
+          connectorId: route.connectorId,
+          senderId: route.senderId,
+          senderName: route.senderName,
+          providerProfileId: normalize(body?.providerProfileId) || runtimeDefaults.providerProfileId,
+          providerModel: normalize(body?.providerModel) || runtimeDefaults.providerModel,
+          compactPackKey: normalize(body?.compactPackKey) || runtimeDefaults.compactPackKey,
+          fallbackProviderProfileId: normalize(body?.fallbackProviderProfileId) || fallbackProviderProfileIds[0] || '',
+          fallbackProviderProfileIds,
+          rolePresetId: normalize(body?.rolePresetId) || runtimeDefaults.rolePresetId,
+          roleKey: normalize(body?.roleKey),
+          activePackRoles: normalizeStringArray(body?.activePackRoles).length > 0
+            ? normalizeStringArray(body?.activePackRoles)
+            : runtimeDefaults.activePackRoles,
+          workMode: normalize(body?.workMode) || runtimeDefaults.workMode,
+          skillIds: normalizeStringArray(body?.skillIds).length > 0
+            ? normalizeStringArray(body?.skillIds)
+            : runtimeDefaults.skillIds,
+          evaluateLoop: body?.evaluateLoop && typeof body.evaluateLoop === 'object' && !Array.isArray(body.evaluateLoop)
+            ? normalizeEvaluateLoopInput(body.evaluateLoop)
+            : normalizeEvaluateLoopInput(runtimeDefaults.evaluateLoop),
+          agentIdentity: runtimeDefaults.agentIdentity,
+          roleIdentityMap: runtimeDefaults.roleIdentityMap,
+          priority: normalizeTaskPriority(body?.priority),
+          requiresApproval: normalizeBooleanFlag(body?.requiresApproval, false),
+        })
+
+        let approval = null
+        let persistedTask = task
+        if (task.approvalRequired && standaloneApprovalManager) {
+          approval = await standaloneApprovalManager.createApproval({
+            taskId: task.id,
+            taskTitle: task.title,
+            taskDescription: task.description,
+            priority: task.priority,
+            rolePresetId: task.rolePresetId,
+            projectPath: task.projectPath,
+            taskCommandMode: task.taskCommandMode,
+            requestedBy: route.senderName || route.senderId || 'dashboard',
+          })
+          persistedTask = await standaloneTaskManager.setTaskApproval(task.id, {
+            approvalRequired: true,
+            approvalStatus: 'pending',
+            approvalId: approval.id,
+          })
+        }
+
+        const runResult = body?.runNow === false || approval
+          ? { started: false, reason: approval ? 'task_approval_pending' : 'queued', task: persistedTask }
+          : await standaloneTaskManager.runTask(task.id)
+
+        registerTaskRoute(
+          task.id,
+          route,
+          persistedTask?.projectPath || task.projectPath,
+          persistedTask?.title || task.title,
+        )
+
+        return json(res, 200, {
+          ok: true,
+          task: standaloneTaskManager.getTask(task.id),
+          runResult,
+          approvalId: approval?.id || '',
+        }, responseHeaders)
+      }
+
+      if (req.method === 'GET' && pathname === '/runs') {
+        if (!standaloneTaskManager) {
+          return json(res, 200, {
+            ok: true,
+            runs: [],
+            summary: {
+              countsByStatus: {},
+            },
+          }, responseHeaders)
+        }
+
+        const runs = standaloneTaskManager.listRuns({
+          status: requestUrl.searchParams.get('status') || '',
+          q: requestUrl.searchParams.get('q') || '',
+          taskId: requestUrl.searchParams.get('taskId') || requestUrl.searchParams.get('task_id') || '',
+          limit: parseLimit(requestUrl.searchParams.get('limit')),
+        })
+
+        const countsByStatus = {}
+        for (const run of runs) {
+          const status = normalize(run?.status) || 'unknown'
+          countsByStatus[status] = (countsByStatus[status] || 0) + 1
+        }
+
+        return json(res, 200, {
+          ok: true,
+          runs,
+          summary: {
+            countsByStatus,
+          },
+        }, responseHeaders)
+      }
+
+      const runDetailMatch = pathname.match(/^\/runs\/([^/]+)$/)
+      if (req.method === 'GET' && runDetailMatch && standaloneTaskManager) {
+        const runId = decodePathSegment(runDetailMatch[1])
+        const runBundle = standaloneTaskManager.getRun(runId)
+        if (!runBundle) {
+          return json(res, 404, { error: 'run_not_found' }, responseHeaders)
+        }
+
+        const run = runBundle.run
+        const task = runBundle.task
+        return json(res, 200, {
+          ok: true,
+          task,
+          run,
+          artifacts: {
+            briefFile: {
+              preview: run?.summary ? `# Brief\n\n${run.summary}` : 'No brief preview available.',
+            },
+            resultFile: {
+              preview: JSON.stringify({
+                status: run?.status || 'unknown',
+                mode: run?.mode || '',
+                error: run?.error || '',
+              }, null, 2),
+            },
+            logFile: {
+              preview: run?.error || run?.summary || 'No log preview available.',
+            },
+          },
+        }, responseHeaders)
+      }
+
+      if (req.method === 'GET' && pathname === '/tasks') {
+        if (!standaloneTaskManager) {
+          return json(res, 200, {
+            ok: true,
+            tasks: [],
+            summary: {
+              total: 0,
+              countsByStatus: {},
+              countsByType: {},
+              countsByPriority: {},
+              approvalsPending: 0,
+              runnerConfigured: false,
+              activeRuns: 0,
+            },
+          }, responseHeaders)
+        }
+
+        const tasks = standaloneTaskManager.listTasks({
+          status: requestUrl.searchParams.get('status') || '',
+          commandType: requestUrl.searchParams.get('commandType') || requestUrl.searchParams.get('command_type') || '',
+          priority: requestUrl.searchParams.get('priority') || '',
+          query: requestUrl.searchParams.get('q') || '',
+          limit: parseLimit(requestUrl.searchParams.get('limit')),
+        })
+
+        return json(res, 200, {
+          ok: true,
+          tasks,
+          summary: standaloneTaskManager.countTasks(),
+        }, responseHeaders)
+      }
+
+      const taskRunsMatch = pathname.match(/^\/tasks\/([^/]+)\/runs$/)
+      if (req.method === 'GET' && taskRunsMatch && standaloneTaskManager) {
+        const taskId = decodePathSegment(taskRunsMatch[1])
+        const runs = standaloneTaskManager.listTaskRuns(taskId)
+        return json(res, 200, {
+          ok: true,
+          taskId,
+          runs,
+        }, responseHeaders)
+      }
+
+      const taskDetailMatch = pathname.match(/^\/tasks\/([^/]+)$/)
+      if (req.method === 'GET' && taskDetailMatch && standaloneTaskManager) {
+        const taskId = decodePathSegment(taskDetailMatch[1])
+        const task = standaloneTaskManager.getTask(taskId)
+        if (!task) {
+          return json(res, 404, { error: 'task_not_found' }, responseHeaders)
+        }
+        return json(res, 200, { ok: true, task }, responseHeaders)
+      }
+
+      const taskPriorityMatch = pathname.match(/^\/tasks\/([^/]+)\/priority$/)
+      if (req.method === 'POST' && taskPriorityMatch && standaloneTaskManager) {
+        if (!requireSecret(req)) {
+          return json(res, 401, { error: 'unauthorized' }, responseHeaders)
+        }
+        const taskId = decodePathSegment(taskPriorityMatch[1])
+        const body = await readBody(req, { maxBytes: config.maxIngestBodyBytes })
+        const updatedTask = await standaloneTaskManager.updateTaskPriority(taskId, body?.priority)
+        if (!updatedTask) {
+          return json(res, 404, { error: 'task_not_found' }, responseHeaders)
+        }
+        return json(res, 200, { ok: true, task: updatedTask }, responseHeaders)
+      }
+
+      const taskRunMatch = pathname.match(/^\/tasks\/([^/]+)\/run$/)
+      if (req.method === 'POST' && taskRunMatch && standaloneTaskManager) {
+        if (!requireSecret(req)) {
+          return json(res, 401, { error: 'unauthorized' }, responseHeaders)
+        }
+        const taskId = decodePathSegment(taskRunMatch[1])
+        const runResult = await standaloneTaskManager.runTask(taskId)
+        if (runResult.reason === 'task_missing') {
+          return json(res, 404, { error: 'task_not_found' }, responseHeaders)
+        }
+        if (runResult.reason === 'task_approval_pending') {
+          return json(res, 409, { error: 'task_approval_pending', task: runResult.task }, responseHeaders)
+        }
+        return json(res, 200, { ok: true, runResult, task: runResult.task || standaloneTaskManager.getTask(taskId) }, responseHeaders)
+      }
+
+      if (req.method === 'GET' && pathname === '/approvals' && standaloneApprovalManager) {
+        const approvals = standaloneApprovalManager.listApprovals({
+          status: requestUrl.searchParams.get('status') || '',
+          query: requestUrl.searchParams.get('q') || '',
+          taskId: requestUrl.searchParams.get('taskId') || requestUrl.searchParams.get('task_id') || '',
+          limit: Number.parseInt(String(requestUrl.searchParams.get('limit') || ''), 10) || 0,
+        })
+        return json(res, 200, {
+          ok: true,
+          approvals,
+          summary: standaloneApprovalManager.countApprovals(),
+        }, responseHeaders)
+      }
+
+      const approvalDetailMatch = pathname.match(/^\/approvals\/([^/]+)$/)
+      if (req.method === 'GET' && approvalDetailMatch && standaloneApprovalManager) {
+        const approvalId = decodePathSegment(approvalDetailMatch[1])
+        const approval = standaloneApprovalManager.getApproval(approvalId)
+        if (!approval) {
+          return json(res, 404, { error: 'approval_not_found' }, responseHeaders)
+        }
+        return json(res, 200, { ok: true, approval }, responseHeaders)
+      }
+
+      const approvalApproveMatch = pathname.match(/^\/approvals\/([^/]+)\/approve$/)
+      if (req.method === 'POST' && approvalApproveMatch && standaloneApprovalManager && standaloneTaskManager) {
+        if (!requireSecret(req)) {
+          return json(res, 401, { error: 'unauthorized' }, responseHeaders)
+        }
+        const approvalId = decodePathSegment(approvalApproveMatch[1])
+        const decision = await standaloneApprovalManager.approveApproval(approvalId, {})
+        if (!decision.approval) {
+          return json(res, 404, { error: 'approval_not_found' }, responseHeaders)
+        }
+        if (!decision.applied) {
+          return json(res, 409, { error: 'approval_not_pending', approval: decision.approval }, responseHeaders)
+        }
+
+        const task = await standaloneTaskManager.setTaskApproval(decision.approval.taskId, {
+          approvalRequired: true,
+          approvalStatus: 'approved',
+          approvalId: decision.approval.id,
+        })
+        const runResult = await standaloneTaskManager.runTask(decision.approval.taskId)
+
+        return json(res, 200, {
+          ok: true,
+          approval: decision.approval,
+          task,
+          runResult,
         }, responseHeaders)
       }
 
@@ -739,6 +2524,7 @@ export function createBridgeServer(options = {}) {
       server.listen(options.port ?? config.port, listenHost)
     })
     statusRelay.start()
+    scheduleManager.start()
     logInfo('bridge_started', {
       url: getListenUrl(),
       mode: config.taskCommandMode,
@@ -749,6 +2535,7 @@ export function createBridgeServer(options = {}) {
 
   async function stop() {
     statusRelay.stop()
+    scheduleManager.stop()
     await flushBridgeState()
     if (!server.listening) return
     await new Promise((resolve) => {
@@ -766,6 +2553,7 @@ export function createBridgeServer(options = {}) {
     config,
     server,
     statusRelay,
+    scheduleManager,
     start,
     stop,
     getListenUrl,

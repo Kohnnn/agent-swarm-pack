@@ -2,10 +2,13 @@ import { buildConnectorMessagePayload } from "./channels.js"
 import { logInfo, logWarn } from "./logger.js"
 import {
   buildDirectiveRequestBody,
+  buildParallelTaskSet,
+  buildTeamDelegationPlan,
   buildTaskCreateRequest,
   buildTaskRunRequest,
   createExecutionContext,
 } from "./orchestrator.js"
+import { resolveFailoverProfile } from "./providers.js"
 
 const AUTH_CACHE_TTL_MS = 15 * 60 * 1000
 const COMPACT_AGENT_CACHE_TTL_MS = 5 * 60 * 1000
@@ -393,9 +396,26 @@ function extractErrorReason(response) {
   return `http_${response.status}`
 }
 
+function isRetryableResponse(response) {
+  return !!response && RETRYABLE_STATUS_CODES.has(Number(response.status))
+}
+
+function recordProviderAttempt(config, profileId, startedAt, failed) {
+  if (!config?.runtimeMetrics?.recordProviderRequest) return
+  config.runtimeMetrics.recordProviderRequest({
+    profileId,
+    latencyMs: Date.now() - startedAt,
+    failed,
+  })
+}
+
+function recordProviderFailover(config) {
+  config?.runtimeMetrics?.recordProviderFailover?.()
+}
+
 export async function forwardDirectiveToAgentsswarm(config, payload) {
   const text = buildCommandText(payload.text)
-  const context = createExecutionContext(config, {
+  const initialContext = createExecutionContext(config, {
     ...payload,
     text,
     commandType: "directive",
@@ -406,24 +426,57 @@ export async function forwardDirectiveToAgentsswarm(config, payload) {
     commandText: text,
   })
 
-  const body = buildDirectiveRequestBody(config, context, projectBinding, {
-    ...payload,
-    text,
-  })
+  let context = initialContext
+  let response = null
 
-  const response = await requestAgentsswarmJson(
-    config,
-    "/api/inbox",
-    {
-      method: "POST",
-      body: JSON.stringify(body),
-    },
-    { includeInboxSecret: true },
-  )
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const startedAt = Date.now()
+    const body = buildDirectiveRequestBody(config, context, projectBinding, {
+      ...payload,
+      providerProfileId: context.providerProfile?.id,
+      providerModel: context.providerModel,
+      text,
+    })
 
-  if (!response.ok) {
-    const reason = extractErrorReason(response)
-    throw new Error(`directive_forward_failed:${reason}`)
+    response = await requestAgentsswarmJson(
+      config,
+      "/api/inbox",
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+      { includeInboxSecret: true },
+    )
+
+    recordProviderAttempt(config, context.providerProfile?.id, startedAt, !response.ok)
+    if (response.ok) break
+
+    const fallbackProfile = resolveFailoverProfile(context.failoverChain, context.providerProfile?.id, {
+      status: response.status,
+      retryableStatuses: [...RETRYABLE_STATUS_CODES],
+    })
+    if (!fallbackProfile || attempt >= 1 || !isRetryableResponse(response)) {
+      const reason = extractErrorReason(response)
+      throw new Error(`directive_forward_failed:${reason}`)
+    }
+
+    logWarn("provider_failover", {
+      from: context.providerProfile?.id,
+      to: fallbackProfile.id,
+      reason: extractErrorReason(response),
+      status: response.status,
+    })
+    recordProviderFailover(config)
+    context = createExecutionContext(config, {
+      ...payload,
+      providerProfileId: fallbackProfile.id,
+      providerModel: fallbackProfile.model,
+      fallbackProviderProfileIds: (context.failoverChain || [])
+        .map((profile) => profile.id)
+        .filter((profileId) => profileId !== fallbackProfile.id),
+      text,
+      commandType: "directive",
+    })
   }
 
   logInfo("directive_forwarded", {
@@ -442,34 +495,149 @@ export async function forwardDirectiveToAgentsswarm(config, payload) {
 export async function createAndRunTaskInAgentsswarm(config, payload) {
   const text = buildCommandText(payload.text)
   const mode = config.taskCommandMode || "hybrid"
-  const context = createExecutionContext(config, {
+  let context = createExecutionContext(config, {
     ...payload,
     text,
     commandType: "task",
   })
 
+  const createRemoteTask = async (taskContext, taskText, options = {}) => {
+    const createPayload = {
+      ...buildTaskCreateRequest(taskContext, taskText, options),
+      title: extractTaskTitle(taskText),
+    }
+    const created = await requestAgentsswarmJson(
+      config,
+      "/api/tasks",
+      {
+        method: "POST",
+        body: JSON.stringify(createPayload),
+      },
+      { requireAuth: true },
+    )
+    return {
+      createPayload,
+      created,
+    }
+  }
+
+  const createRemoteTaskGraph = async (taskContext, cleanTaskText) => {
+    if (taskContext.workMode === "team") {
+      const plan = buildTeamDelegationPlan(taskContext, cleanTaskText)
+      const tasks = []
+      let parentTaskId = ""
+      for (const step of plan) {
+        const stepContext = createExecutionContext(config, {
+          ...payload,
+          text,
+          commandType: "task",
+          roleKey: step.roleKey,
+          providerProfileId: step.providerProfileId,
+        })
+        const { createPayload, created } = await createRemoteTask(stepContext, step.taskText, {
+          parentTaskId,
+          delegationIndex: step.delegationIndex,
+        })
+        if (!created.ok || typeof created.body?.task?.id !== "string") {
+          return { ok: false, created, createPayload }
+        }
+        const createdTaskId = created.body.task.id
+        if (!parentTaskId) parentTaskId = createdTaskId
+        tasks.push({
+          id: createdTaskId,
+          context: stepContext,
+          createPayload,
+        })
+      }
+      return { ok: true, tasks, parentTaskId }
+    }
+
+    if (taskContext.workMode === "parallel") {
+      const taskSet = buildParallelTaskSet(taskContext, cleanTaskText)
+      const tasks = []
+      let parentTaskId = ""
+      for (const step of taskSet) {
+        const stepContext = createExecutionContext(config, {
+          ...payload,
+          text,
+          commandType: "task",
+          roleKey: step.roleKey,
+          providerProfileId: step.providerProfileId,
+        })
+        const { createPayload, created } = await createRemoteTask(stepContext, step.taskText, {
+          parentTaskId,
+          delegationIndex: step.delegationIndex,
+        })
+        if (!created.ok || typeof created.body?.task?.id !== "string") {
+          return { ok: false, created, createPayload }
+        }
+        const createdTaskId = created.body.task.id
+        if (!parentTaskId) parentTaskId = createdTaskId
+        tasks.push({
+          id: createdTaskId,
+          context: stepContext,
+          createPayload,
+        })
+      }
+      return { ok: true, tasks, parentTaskId }
+    }
+
+    const { createPayload, created } = await createRemoteTask(taskContext, cleanTaskText)
+    if (!created.ok || typeof created.body?.task?.id !== "string") {
+      return { ok: false, created, createPayload }
+    }
+    return {
+      ok: true,
+      tasks: [{
+        id: created.body.task.id,
+        context: taskContext,
+        createPayload,
+      }],
+      parentTaskId: created.body.task.id,
+    }
+  }
+
   const cleanTaskText = stripCommandPrefix(text, "#")
-  const createPayload = {
-    ...buildTaskCreateRequest(context, cleanTaskText),
-    title: extractTaskTitle(cleanTaskText),
+  let graph = null
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const startedAt = Date.now()
+    graph = await createRemoteTaskGraph(context, cleanTaskText)
+    const created = graph?.created || (graph?.ok ? { ok: true, status: 200 } : null)
+    recordProviderAttempt(config, context.providerProfile?.id, startedAt, graph?.ok !== true)
+
+    if (graph?.ok) break
+
+    const fallbackProfile = resolveFailoverProfile(context.failoverChain, context.providerProfile?.id, {
+      status: created?.status,
+      retryableStatuses: [...RETRYABLE_STATUS_CODES],
+    })
+    if (!fallbackProfile || attempt >= 1 || !isRetryableResponse(created)) {
+      const reason = extractErrorReason(created)
+      throw new Error(`task_create_failed:${reason}`)
+    }
+
+    logWarn("provider_failover", {
+      from: context.providerProfile?.id,
+      to: fallbackProfile.id,
+      reason: extractErrorReason(created),
+      status: created.status,
+    })
+    recordProviderFailover(config)
+    context = createExecutionContext(config, {
+      ...payload,
+      providerProfileId: fallbackProfile.id,
+      providerModel: fallbackProfile.model,
+      fallbackProviderProfileIds: (context.failoverChain || [])
+        .map((profile) => profile.id)
+        .filter((profileId) => profileId !== fallbackProfile.id),
+      text,
+      commandType: "task",
+    })
   }
-
-  const created = await requestAgentsswarmJson(
-    config,
-    "/api/tasks",
-    {
-      method: "POST",
-      body: JSON.stringify(createPayload),
-    },
-    { requireAuth: true },
-  )
-
-  if (!created.ok || typeof created.body?.task?.id !== "string") {
-    const reason = extractErrorReason(created)
-    throw new Error(`task_create_failed:${reason}`)
-  }
-
-  const taskId = created.body.task.id
+  const tasks = graph?.tasks || []
+  const primaryTask = tasks[0]
+  const taskId = primaryTask?.id
 
   if (mode === "board_only") {
     logInfo("task_registered", {
@@ -482,26 +650,31 @@ export async function createAndRunTaskInAgentsswarm(config, payload) {
     })
     return {
       taskId,
-      title: createPayload.title,
+      title: primaryTask?.createPayload?.title || extractTaskTitle(cleanTaskText),
       projectPath: context.projectPath || null,
       runStarted: false,
-      ackText: `Task registered on board (${taskId.slice(0, 8)}) via ${context.compactPack?.key || "compact-pack"}.`,
+      ackText: tasks.length > 1
+        ? `Task graph registered (${tasks.length} tasks, root ${taskId.slice(0, 8)}).`
+        : `Task registered on board (${taskId.slice(0, 8)}) via ${context.compactPack?.key || "compact-pack"}.`,
     }
   }
 
-  const run = await requestAgentsswarmJson(
-    config,
-    `/api/tasks/${encodeURIComponent(taskId)}/run`,
-    {
-      method: "POST",
-      body: JSON.stringify(buildTaskRunRequest(context)),
-    },
-    { requireAuth: true },
-  )
-
-  if (!run.ok) {
-    const reason = extractErrorReason(run)
-    throw new Error(`task_run_failed:${reason}`)
+  for (const taskEntry of tasks) {
+    const runStartedAt = Date.now()
+    const run = await requestAgentsswarmJson(
+      config,
+      `/api/tasks/${encodeURIComponent(taskEntry.id)}/run`,
+      {
+        method: "POST",
+        body: JSON.stringify(buildTaskRunRequest(taskEntry.context)),
+      },
+      { requireAuth: true },
+    )
+    recordProviderAttempt(config, taskEntry.context.providerProfile?.id, runStartedAt, !run.ok)
+    if (!run.ok) {
+      const reason = extractErrorReason(run)
+      throw new Error(`task_run_failed:${reason}`)
+    }
   }
 
   logInfo("task_created_and_started", {
@@ -514,10 +687,12 @@ export async function createAndRunTaskInAgentsswarm(config, payload) {
 
   return {
     taskId,
-    title: createPayload.title,
+    title: primaryTask?.createPayload?.title || extractTaskTitle(cleanTaskText),
     projectPath: context.projectPath || null,
     runStarted: true,
-    ackText: `Task registered and started (${taskId.slice(0, 8)}) via ${context.compactPack?.key || "compact-pack"}.`,
+    ackText: tasks.length > 1
+      ? `Task graph registered and started (${tasks.length} tasks, root ${taskId.slice(0, 8)}).`
+      : `Task registered and started (${taskId.slice(0, 8)}) via ${context.compactPack?.key || "compact-pack"}.`,
   }
 }
 

@@ -7,7 +7,7 @@ set "RUN_DEV=0"
 set "DO_UPDATE=0"
 set "RESYNC_ENV=0"
 set "RUN_DOCTOR=0"
-set "FORCE_RESTART=0"
+set "RUN_UI=1"
 
 :parse_args
 if "%~1"=="" goto args_done
@@ -15,7 +15,7 @@ if /i "%~1"=="--dev" set "RUN_DEV=1"
 if /i "%~1"=="--update" set "DO_UPDATE=1"
 if /i "%~1"=="--resync-env" set "RESYNC_ENV=1"
 if /i "%~1"=="--doctor" set "RUN_DOCTOR=1"
-if /i "%~1"=="--restart" set "FORCE_RESTART=1"
+if /i "%~1"=="--no-ui" set "RUN_UI=0"
 shift
 goto parse_args
 
@@ -54,7 +54,16 @@ if errorlevel 1 (
   exit /b 1
 )
 
-call npm run startup-check
+set "HAS_STARTUP_CHECK=0"
+call node -e "const fs=require('node:fs');const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));process.exit(pkg.scripts&&pkg.scripts['startup-check']?0:1)" >nul 2>&1
+if not errorlevel 1 set "HAS_STARTUP_CHECK=1"
+
+if "%HAS_STARTUP_CHECK%"=="1" (
+  call npm run startup-check
+) else (
+  echo [WARN] startup-check script not found, falling back to preflight.
+  call npm run preflight
+)
 if errorlevel 1 (
   echo [ERROR] AgentSwarm startup checks failed. Fix the blocking issues above, then retry.
   exit /b 1
@@ -77,22 +86,36 @@ set "UI_PORT=7800"
 for /f "tokens=1,2 delims==" %%A in ('findstr /b /c:"UI_PORT=" ".env" 2^>nul') do set "UI_PORT=%%B"
 call :find_port_pid !BRIDGE_PORT!
 if defined PORT_PID (
-  if "%FORCE_RESTART%"=="1" (
-    echo [INFO] Restart requested. Stopping existing AgentSwarm process !PORT_PID! ...
+  echo [INFO] Stopping existing AgentSwarm process on port !BRIDGE_PORT! ^(pid=!PORT_PID!^)...
+  taskkill /PID !PORT_PID! /F >nul 2>&1
+  timeout /t 1 >nul
+  set "PORT_PID="
+)
+
+if "%RUN_UI%"=="1" (
+  if not exist "%~dp0agentsswarm\ui" (
+    echo [WARN] UI directory not found. Skipping SPA UI launch.
+    set "RUN_UI=0"
+  ) else (
+    if not exist "%~dp0agentsswarm\ui\node_modules" (
+      echo [INFO] Installing UI dependencies...
+      call npm --prefix "ui" install
+      if errorlevel 1 (
+        echo [WARN] UI dependency install failed. Skipping SPA UI launch.
+        set "RUN_UI=0"
+      )
+    )
+  )
+)
+
+if "%RUN_UI%"=="1" (
+  call :find_port_pid !UI_PORT!
+  if defined PORT_PID (
+    echo [INFO] Stopping existing UI process on port !UI_PORT! ^(pid=!PORT_PID!^)...
     taskkill /PID !PORT_PID! /F >nul 2>&1
     timeout /t 1 >nul
     set "PORT_PID="
   )
-)
-if defined PORT_PID (
-  echo [INFO] AgentSwarm already listening on port !BRIDGE_PORT! ^(pid=!PORT_PID!^).
-  set "BRIDGE_URL=http://127.0.0.1:!BRIDGE_PORT!"
-  if "%RUN_DOCTOR%"=="1" (
-    call npm run cli -- doctor
-  ) else (
-    call npm run cli -- summary
-  )
-  exit /b 0
 )
 
 if "%DO_UPDATE%"=="1" if "%NEEDS_SETUP%"=="0" (
@@ -111,7 +134,11 @@ echo   Service: secure local control plane with browser dashboard
 echo   Execution Backend: !EXECUTION_BACKEND!
 echo   Connector Backend: !CONNECTOR_BACKEND!
 echo   Dashboard: http://127.0.0.1:!BRIDGE_PORT!/
-echo   SPA UI:  http://127.0.0.1:!UI_PORT!/dashboard ^(run: npm run dev:web^)
+if "%RUN_UI%"=="1" (
+  echo   SPA UI:  http://127.0.0.1:!UI_PORT!/dashboard ^(auto-started^)
+) else (
+  echo   SPA UI:  disabled ^(--no-ui^)
+)
 echo   Health:  http://127.0.0.1:!BRIDGE_PORT!/health
 echo   Tasks:   http://127.0.0.1:!BRIDGE_PORT!/tasks
 echo   Routes:  set BRIDGE_URL=http://127.0.0.1:!BRIDGE_PORT! ^&^& npm run cli -- routes
@@ -119,9 +146,27 @@ echo   Resolve: set BRIDGE_URL=http://127.0.0.1:!BRIDGE_PORT! ^&^& npm run cli -
 echo   Summary: set BRIDGE_URL=http://127.0.0.1:!BRIDGE_PORT! ^&^& npm run cli -- summary
 echo ================================================
 
+if "%RUN_UI%"=="1" (
+  echo [INFO] Launching SPA UI on http://127.0.0.1:!UI_PORT!/dashboard ...
+  start "AgentSwarm UI" cmd /k "cd /d ""%~dp0agentsswarm\ui"" && npm run dev -- --port !UI_PORT!"
+  timeout /t 1 >nul
+)
+
 if "%RUN_DEV%"=="1" (
+  echo [INFO] Running in dev/watch mode.
+  echo [INFO] Open dashboard: http://127.0.0.1:!BRIDGE_PORT!/dashboard
   call npm run dev
 ) else (
+  set "BRIDGE_URL=http://127.0.0.1:!BRIDGE_PORT!"
+  if "%RUN_DOCTOR%"=="1" (
+    call npm run cli -- doctor
+    if errorlevel 1 (
+      echo [ERROR] Doctor checks failed. Resolve reported issues before start.
+      exit /b 1
+    )
+  )
+  echo [INFO] Launching AgentSwarm runtime in this window...
+  echo [INFO] Dashboard: http://127.0.0.1:!BRIDGE_PORT!/dashboard
   call npm start
 )
 

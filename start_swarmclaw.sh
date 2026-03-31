@@ -1,78 +1,74 @@
 #!/usr/bin/env bash
 
 # ============================================================
-#  SwarmClaw Daily Launcher
-#  Target OS: macOS / Linux
+#  SwarmClaw Premium Launcher
+#  Target OS  : macOS / Linux / WSL
 # ============================================================
 
 set -e
 
-cd "$(dirname "$0")/swarmclaw" || {
-    echo "[ERROR] Could not enter swarmclaw directory."
-    echo "        Run ./setup_swarmclaw.sh first."
-    exit 1
-}
+# Colors
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
 
-check_port_in_use() {
-    local port="$1"
-    if command -v lsof >/dev/null 2>&1; then
-        lsof -iTCP:"$port" -sTCP:LISTEN -t >/dev/null 2>&1
-        return $?
-    fi
-    if command -v ss >/dev/null 2>&1; then
-        ss -ltn | grep -q ":${port} "
-        return $?
-    fi
-    return 1
-}
+RUN_DEV=0
+DO_UPDATE=0
+RESYNC_ENV=0
+RUN_DOCTOR=0
+PORT=3456
 
-LOCK_FILE=".next/dev/lock"
-ACTIVE_PORT=""
-for port in 3456 3460 3470; do
-    if check_port_in_use "$port"; then
-        ACTIVE_PORT="$port"
-        break
-    fi
+# Parse arguments
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --dev) RUN_DEV=1 ;;
+        --update) DO_UPDATE=1 ;;
+        --resync-env) RESYNC_ENV=1 ;;
+        --doctor) RUN_DOCTOR=1 ;;
+        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+    esac
+    shift
 done
 
-if [ -f "$LOCK_FILE" ]; then
-    if [ -n "$ACTIVE_PORT" ]; then
-        echo "[INFO] Existing SwarmClaw dev server appears to be running."
-        echo "       Open: http://127.0.0.1:${ACTIVE_PORT}"
-        echo "       Stop the old server first if you want to restart on a different port."
-        exit 0
-    fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-    echo "[WARN] Found stale Next.js lock file. Removing it..."
-    rm -f "$LOCK_FILE"
+NEEDS_SETUP=0
+if [ ! -d "$SCRIPT_DIR/swarmclaw" ]; then NEEDS_SETUP=1; fi
+if [ ! -f "$SCRIPT_DIR/swarmclaw/.env" ]; then NEEDS_SETUP=1; fi
+if [ ! -d "$SCRIPT_DIR/swarmclaw/node_modules" ]; then NEEDS_SETUP=1; fi
+
+if [ "$NEEDS_SETUP" -eq 1 ]; then
+    echo -e "[INFO] Bootstrap required. Running setup_swarmclaw.sh..."
+    bash "$SCRIPT_DIR/setup_swarmclaw.sh"
 fi
 
-SWARMCLAW_PORT=3456
-if check_port_in_use "$SWARMCLAW_PORT"; then
-    echo "[WARN] Port 3456 is already in use. Trying fallback ports..."
-    for port in 3460 3470; do
-        if ! check_port_in_use "$port"; then
-            SWARMCLAW_PORT="$port"
-            break
-        fi
-    done
+cd "$SCRIPT_DIR/swarmclaw"
+
+# Handle explicit update
+if [ "$DO_UPDATE" -eq 1 ]; then
+    echo -e "[INFO] Updating SwarmClaw..."
+    bash "$SCRIPT_DIR/setup_swarmclaw.sh" --update
 fi
 
-if check_port_in_use "$SWARMCLAW_PORT"; then
-    echo "[ERROR] Ports 3456, 3460, and 3470 are all in use."
-    echo "        Stop existing process or run manually with a free port."
-    exit 1
+# Port Management
+echo -e "[INFO] Checking port $PORT..."
+PID=$(lsof -t -i:$PORT 2>/dev/null || true)
+if [ ! -z "$PID" ]; then
+    echo -e "[INFO] Stopping existing SwarmClaw process on port $PORT (pid=$PID)..."
+    kill -9 $PID
+    sleep 1
 fi
 
-echo ""
-echo "========================================================"
-echo "   SwarmClaw  -  Starting dev server"
-echo "   UI will be at: http://127.0.0.1:${SWARMCLAW_PORT}"
-echo "========================================================"
-echo ""
+echo -e "\n${BLUE}========================================================${NC}"
+echo -e "${BLUE}   SwarmClaw starting${NC}"
+echo -e "${BLUE}   Dashboard: http://127.0.0.1:$PORT${NC}"
+echo -e "${BLUE}========================================================${NC}\n"
 
-if [ "$SWARMCLAW_PORT" = "3456" ]; then
+if [ "$RUN_DEV" -eq 1 ]; then
     npm run dev
 else
-    node ./node_modules/next/dist/bin/next dev --webpack --hostname 0.0.0.0 -p "$SWARMCLAW_PORT"
+    npm start
 fi

@@ -1,4 +1,22 @@
-const SUPPORTED_PLATFORMS = ["telegram", "discord", "whatsapp", "cli"]
+const SUPPORTED_PLATFORMS = ["telegram", "discord", "whatsapp", "slack", "cli"]
+
+export const platformConfigSchema = {
+  discord: {
+    required: ["token", "guildId", "channelId"],
+  },
+  telegram: {
+    required: ["botToken", "chatId"],
+  },
+  whatsapp: {
+    required: ["phoneNumberId", "accessToken", "webhookVerifyToken"],
+  },
+  slack: {
+    required: ["botToken", "channelId"],
+  },
+  cli: {
+    required: ["projectPath"],
+  },
+}
 
 function normalizeText(value) {
   return typeof value === "string" ? value.trim() : ""
@@ -84,6 +102,17 @@ export function buildConnectorMessagePayload(route, text) {
   if (accountId) payload.accountId = accountId
   if (platform) payload.platform = platform
   return payload
+}
+
+export function validatePlatformConfig(platform, config = {}) {
+  const normalizedPlatform = normalizePlatform(platform)
+  const schema = platformConfigSchema[normalizedPlatform] || { required: [] }
+  const missingFields = schema.required.filter((field) => !normalizeText(config[field]))
+  return {
+    platform: normalizedPlatform,
+    valid: missingFields.length === 0,
+    missingFields,
+  }
 }
 
 function firstNonEmpty(values) {

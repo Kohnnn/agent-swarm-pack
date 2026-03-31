@@ -3,19 +3,20 @@ set -euo pipefail
 
 DO_UPDATE=0
 RESYNC_ENV=0
+SKIP_BUILD=0
 SKIP_TESTS=0
 
 for arg in "$@"; do
   case "$arg" in
     --update)     DO_UPDATE=1 ;;
     --resync-env) RESYNC_ENV=1 ;;
+    --skip-build) SKIP_BUILD=1 ;;
     --skip-tests) SKIP_TESTS=1 ;;
   esac
 done
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="${ROOT_DIR}/claw-empire"
-REQUIRED_NODE=22
+PROJECT_DIR="${ROOT_DIR}/goclaw"
 
 # ─── Colors ───────────────────────────────────────────────────────────────────
 BOLD='\033[1m'
@@ -30,45 +31,39 @@ NC='\033[0m'
 # ─── Banner ───────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}${BLUE}  ╔═══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BOLD}${BLUE}  ║${NC}  ${CYAN}Claw Empire Setup${NC}  ${GREY}|${NC}  AgentsSwarm Empire Installer     ${BOLD}${BLUE}║${NC}"
+echo -e "${BOLD}${BLUE}  ║${NC}     ${CYAN}GoClaw Setup${NC}  ${GREY}|${NC}  AgentsSwarm Gateway Installer       ${BOLD}${BLUE}║${NC}"
 echo -e "${BOLD}${BLUE}  ╚═══════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
 # ─── Directory Guard ──────────────────────────────────────────────────────────
 if [ ! -d "${PROJECT_DIR}" ]; then
-  echo -e "${RED}[ERROR]${NC} claw-empire directory not found at: ${PROJECT_DIR}"
-  echo -e "${GREY}[INFO]${NC}  Run: git clone https://github.com/GreenSheep01201/claw-empire claw-empire"
+  echo -e "${RED}[ERROR]${NC} goclaw directory not found at: ${PROJECT_DIR}"
+  echo -e "${GREY}[INFO]${NC}  Run: git clone https://github.com/nextlevelbuilder/goclaw goclaw"
   exit 1
 fi
 
-# ─── [1/6] Prerequisite: Node.js ──────────────────────────────────────────────
-echo -e "${GREY}[1/6]${NC} Checking Node.js runtime..."
-command -v node > /dev/null 2>&1 || {
-  echo -e "${RED}[ERROR]${NC} Node.js is not installed or not in PATH."
-  echo -e "${GREY}[INFO]${NC}  Download: https://nodejs.org/"
+# ─── [1/6] Prerequisite: Go ───────────────────────────────────────────────────
+echo -e "${GREY}[1/6]${NC} Checking Go runtime..."
+command -v go > /dev/null 2>&1 || {
+  echo -e "${RED}[ERROR]${NC} Go is not installed or not in PATH."
+  echo -e "${GREY}[INFO]${NC}  Download: https://go.dev/dl/"
   exit 1
 }
-NODE_MAJOR="$(node -v | sed 's/^v//' | cut -d'.' -f1)"
-if [ "${NODE_MAJOR}" -lt "${REQUIRED_NODE}" ]; then
-  echo -e "${RED}[ERROR]${NC} Node.js v${REQUIRED_NODE}+ required. Detected: v${NODE_MAJOR}."
-  exit 1
-fi
-echo -e "${GREEN}[OK]${NC}   Node.js $(node -v) detected."
+GO_VER="$(go version | awk '{print $3}' | sed 's/^go//')"
+echo -e "${GREEN}[OK]${NC}   Go ${GO_VER} detected."
 
-# ─── [2/6] Prerequisite: pnpm ─────────────────────────────────────────────────
-echo -e "${GREY}[2/6]${NC} Checking pnpm..."
-if ! command -v pnpm > /dev/null 2>&1; then
-  echo -e "${YELLOW}[WARN]${NC} pnpm not found. Installing globally..."
-  npm install -g pnpm || {
-    echo -e "${RED}[ERROR]${NC} Could not install pnpm. Resolve manually: npm install -g pnpm"
-    exit 1
-  }
+# ─── [2/6] Prerequisite: PostgreSQL ──────────────────────────────────────────
+echo -e "${GREY}[2/6]${NC} Checking PostgreSQL availability..."
+if command -v psql > /dev/null 2>&1; then
+  PG_VER="$(psql --version | awk '{print $3}')"
+  echo -e "${GREEN}[OK]${NC}   PostgreSQL ${PG_VER} detected."
+else
+  echo -e "${YELLOW}[WARN]${NC} psql not found in PATH. Ensure PostgreSQL is installed and running."
+  echo -e "${YELLOW}[WARN]${NC} GoClaw requires a running PostgreSQL instance. Set DATABASE_URL in .env."
 fi
-echo -e "${GREEN}[OK]${NC}   pnpm $(pnpm -v) detected."
 
 # ─── [3/6] Environment Bootstrap ─────────────────────────────────────────────
 echo -e "${GREY}[3/6]${NC} Bootstrapping environment..."
-echo -e "${GREY}[INFO]${NC} Note: Claw Empire uses Node.js --experimental-sqlite (no SQLite CLI needed)."
 if [ "${RESYNC_ENV}" -eq 1 ]; then
   if [ -f "${PROJECT_DIR}/.env.example" ]; then
     cp "${PROJECT_DIR}/.env.example" "${PROJECT_DIR}/.env"
@@ -91,26 +86,31 @@ else
   echo -e "${GREEN}[OK]${NC}   .env already exists. Use --resync-env to overwrite."
 fi
 
-# ─── [4/6] Dependencies ───────────────────────────────────────────────────────
-echo -e "${GREY}[4/6]${NC} Installing dependencies..."
-cd "${PROJECT_DIR}"
-pnpm install
-echo -e "${GREEN}[OK]${NC}   Dependencies installed."
+# ─── [4/6] Build ──────────────────────────────────────────────────────────────
+if [ "${SKIP_BUILD}" -eq 0 ]; then
+  echo -e "${GREY}[4/6]${NC} Building GoClaw binary..."
+  cd "${PROJECT_DIR}"
+  go build -o goclaw .
+  echo -e "${GREEN}[OK]${NC}   Binary built: goclaw"
+else
+  echo -e "${GREY}[4/6]${NC} Skipping build. Run without --skip-build for full build."
+fi
 
-# ─── [5/6] Update ─────────────────────────────────────────────────────────────
+# ─── [5/6] Dependency Update ──────────────────────────────────────────────────
+cd "${PROJECT_DIR}"
 if [ "${DO_UPDATE}" -eq 1 ]; then
-  echo -e "${GREY}[5/6]${NC} Updating dependencies..."
-  pnpm update || echo -e "${YELLOW}[WARN]${NC} pnpm update failed. Continuing with installed versions."
-  echo -e "${GREEN}[OK]${NC}   Dependencies up to date."
+  echo -e "${GREY}[5/6]${NC} Updating Go dependencies..."
+  go get -u ./... || echo -e "${YELLOW}[WARN]${NC} go get -u failed. Continuing with existing versions."
+  go mod tidy
+  echo -e "${GREEN}[OK]${NC}   Dependencies updated."
 else
   echo -e "${GREY}[5/6]${NC} Skipping dependency update. Use --update to pull latest."
 fi
 
 # ─── [6/6] Validation ─────────────────────────────────────────────────────────
 if [ "${SKIP_TESTS}" -eq 0 ]; then
-  echo -e "${GREY}[6/6]${NC} Running tests (with --experimental-sqlite)..."
-  export NODE_OPTIONS="--experimental-sqlite"
-  if pnpm test; then
+  echo -e "${GREY}[6/6]${NC} Running tests..."
+  if go test ./...; then
     echo -e "${GREEN}[OK]${NC}   All tests passed."
   else
     echo -e "${YELLOW}[WARN]${NC} Some tests failed. Resolve before production use."
@@ -122,11 +122,10 @@ fi
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREY}  ─────────────────────────────────────────────────────────────${NC}"
-echo -e "${BOLD}${GREEN}  Claw Empire setup complete!${NC}"
+echo -e "${BOLD}${GREEN}  GoClaw setup complete!${NC}"
 echo -e "${GREY}  Next steps:${NC}"
-echo -e "${GREY}    1. Edit ${NC}${PROJECT_DIR}/.env${GREY} — configure AI provider keys${NC}"
-echo -e "${GREY}    2. Run: ${NC}./start_claw-empire.sh"
-echo -e "${GREY}    3. Run: ${NC}./start_claw-empire.sh --doctor${GREY}   (pre-flight check)${NC}"
-echo -e "${GREY}  Note: SQLite is built-in (NODE_OPTIONS=--experimental-sqlite)${NC}"
+echo -e "${GREY}    1. Edit ${NC}${PROJECT_DIR}/.env${GREY} — set DATABASE_URL, JWT_SECRET${NC}"
+echo -e "${GREY}    2. Run: ${NC}./start_goclaw.sh"
+echo -e "${GREY}    3. Run: ${NC}./start_goclaw.sh --doctor${GREY}   (validate DB connection)${NC}"
 echo -e "${GREY}  ─────────────────────────────────────────────────────────────${NC}"
 echo ""

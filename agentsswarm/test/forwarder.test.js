@@ -156,41 +156,89 @@ test('forwardDirectiveToAgentsswarm reuses project binding and sends inbox secre
   })
 
   assert.equal(result.ackText, 'Directive sent to manager swarm.')
-  assert.deepEqual(inboxPayload, {
-    source: 'telegram',
-    chat: 'channel-1',
-    thread_id: null,
-    account_id: 'primary',
-    author: 'CEO',
-    text: '$sync roadmap',
-    skipPlannedMeeting: true,
-    project_id: 'project-1',
-    project_path: 'C:/workspace/project',
-    project_context: 'Existing core goal',
-    compact_pack_key: 'software-6',
-    provider_profile_id: 'codex-main',
-    workflow_meta_json: {
-      source: 'agentsswarm',
-      hybrid_mode: 'hybrid',
-      compact_pack_key: 'software-6',
-      compact_pack_label: 'Software Delivery 6',
-      provider_profile_id: 'codex-main',
-      provider: 'copilot',
-      provider_transport: 'oauth',
-      provider_model: 'openai-codex/gpt-5.3-codex',
-      provider_available: true,
-      channel: {
-        platform: 'telegram',
-        account_id: 'primary',
-        channel_id: 'channel-1',
-        thread_id: '',
-        connector_id: '',
-        label: 'telegram/primary/channel-1',
-        key: 'telegram|primary|channel-1|-',
-      },
-      command_type: 'directive',
-    },
+  assert.equal(inboxPayload.source, 'telegram')
+  assert.equal(inboxPayload.chat, 'channel-1')
+  assert.equal(inboxPayload.thread_id, null)
+  assert.equal(inboxPayload.account_id, 'primary')
+  assert.equal(inboxPayload.author, 'CEO')
+  assert.equal(inboxPayload.text, '$sync roadmap')
+  assert.equal(inboxPayload.skipPlannedMeeting, true)
+  assert.equal(inboxPayload.project_id, 'project-1')
+  assert.equal(inboxPayload.project_path, 'C:/workspace/project')
+  assert.equal(inboxPayload.project_context, 'Existing core goal')
+  assert.equal(inboxPayload.compact_pack_key, 'software-6')
+  assert.equal(inboxPayload.provider_profile_id, 'codex-main')
+  assert.equal(inboxPayload.provider_model, 'openai-codex/gpt-5.3-codex')
+  assert.equal(inboxPayload.fallback_provider_profile_id, 'codex-main')
+  assert.deepEqual(inboxPayload.fallback_provider_profile_ids, [])
+  assert.equal(inboxPayload.role_preset_id, null)
+
+  const workflowMeta = inboxPayload.workflow_meta_json
+  assert.equal(workflowMeta.source, 'agentsswarm')
+  assert.equal(workflowMeta.hybrid_mode, 'hybrid')
+  assert.equal(workflowMeta.compact_pack_key, 'software-6')
+  assert.equal(workflowMeta.compact_pack_label, 'Software Delivery 6')
+  assert.equal(workflowMeta.work_mode, 'solo')
+  assert.equal(workflowMeta.provider_profile_id, 'codex-main')
+  assert.equal(workflowMeta.provider, 'copilot')
+  assert.equal(workflowMeta.provider_transport, 'oauth')
+  assert.equal(workflowMeta.provider_model, 'openai-codex/gpt-5.3-codex')
+  assert.equal(workflowMeta.fallback_provider_profile_id, 'codex-main')
+  assert.deepEqual(workflowMeta.fallback_provider_profile_ids, [])
+  assert.equal(workflowMeta.role_preset_id, '')
+  assert.equal(workflowMeta.selected_role_key, '')
+  assert.deepEqual(workflowMeta.active_pack_roles, [])
+  assert.deepEqual(workflowMeta.skill_ids, [])
+  assert.deepEqual(workflowMeta.evaluate_loop, {
+    enabled: false,
+    maxTurns: 10,
+    timeoutMs: 300000,
+    approvalGate: false,
   })
+  assert.equal(workflowMeta.task_priority, '')
+  assert.equal(workflowMeta.approval_required, false)
+  assert.equal(workflowMeta.approval_status, '')
+  assert.equal(workflowMeta.provider_available, true)
+  assert.equal(workflowMeta.command_type, 'directive')
+  assert.deepEqual(workflowMeta.channel, {
+    platform: 'telegram',
+    account_id: 'primary',
+    channel_id: 'channel-1',
+    thread_id: '',
+    connector_id: '',
+    label: 'telegram/primary/channel-1',
+    key: 'telegram|primary|channel-1|-',
+  })
+
+  assert.equal(workflowMeta.failover_chain[0]?.id, 'codex-main')
+  assert.equal(workflowMeta.failover_chain[0]?.failover_rank, 0)
+  assert.equal(workflowMeta.failover_chain[1]?.id, 'copilot-review')
+  assert.match(workflowMeta.identity_prompt, /# Soul/)
+  assert.match(workflowMeta.identity_prompt, /# Identity/)
+  assert.deepEqual(workflowMeta.agent_identity, {
+    name: '',
+    persona: '',
+    objective: '',
+    voice: '',
+    guardrails: '',
+    soulText: '',
+    identityText: '',
+    systemPrompt: '',
+    tags: [],
+  })
+  assert.deepEqual(workflowMeta.role_identity, {
+    name: '',
+    persona: '',
+    objective: '',
+    voice: '',
+    guardrails: '',
+    soulText: '',
+    identityText: '',
+    systemPrompt: '',
+    tags: [],
+  })
+  assert.equal(workflowMeta.context_files.map((entry) => entry.name).join(','), 'SOUL.md,IDENTITY.md,AGENTS.md')
+  assert.match(workflowMeta.context_files[0].content, /Core Truths/)
 })
 
 test('forwardDirectiveToAgentsswarm resolves exact project matches across paginated search results', async (t) => {

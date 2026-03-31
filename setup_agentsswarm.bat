@@ -69,6 +69,15 @@ if errorlevel 1 (
   exit /b 1
 )
 
+if exist "ui\package.json" (
+  echo [4/6] Installing UI dependencies...
+  call npm --prefix "ui" install
+  if errorlevel 1 (
+    echo [ERROR] UI npm install failed.
+    exit /b 1
+  )
+)
+
 if "%DO_UPDATE%"=="1" (
   echo [5/6] Updating local dependencies...
   call npm update

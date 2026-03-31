@@ -1,5 +1,7 @@
 import fs from "node:fs"
+import path from "node:path"
 import process from "node:process"
+import { fileURLToPath } from "node:url"
 import { summarizeConnectorInventory } from "./channels.js"
 import { listCompactPacks } from "./compact-packs.js"
 import { loadConfig } from "./config.js"
@@ -170,41 +172,92 @@ function printCliToolActions(cliTools) {
   }
 }
 
-async function runPreflight() {
-  const config = loadLocalConfig()
-  const providerSummary = buildProviderSummary(config)
+function hasConfiguredValue(...values) {
+  return values.some((value) => String(value || "").trim())
+}
+
+function normalizeBackend(value, fallback) {
+  return String(value || "").trim().toLowerCase() || fallback
+}
+
+export function buildPreflightReport(config, providerSummary, options = {}) {
+  const startupOnly = options.startupOnly === true
+  const executionBackend = normalizeBackend(config.executionBackend, "standalone")
+  const connectorBackend = normalizeBackend(config.connectorBackend, "none")
+  const connectorApiConfigured = hasConfiguredValue(config.connectorApiKey, config.swarmclawAccessKey)
+  const remoteInboxConfigured = hasConfiguredValue(config.remoteInboxSecret, config.inboxWebhookSecret)
+
   const rows = []
-  rows.push(["env.SWARMCLAW_ACCESS_KEY", statusText(Boolean(config.swarmclawAccessKey))])
   rows.push(["env.BRIDGE_SECRET", statusText(Boolean(config.bridgeSecret))])
-  rows.push(["env.INBOX_WEBHOOK_SECRET", statusText(Boolean(config.inboxWebhookSecret))])
-  rows.push(["bridge.security", config.allowUnsecuredBridge ? 'unsecured(opt-in)' : 'secret-required'])
+  rows.push(["bridge.security", config.allowUnsecuredBridge ? "unsecured(opt-in)" : "secret-required"])
+  rows.push(["execution.backend", executionBackend])
+  rows.push(["connector.backend", connectorBackend])
   rows.push(["platform.default", config.defaultPlatform])
   rows.push(["provider.default", providerSummary.defaultProviderProfileId || "none"])
   rows.push(["provider.profiles", `${providerSummary.profiles.length}`])
   rows.push(["provider.unavailable", `${providerSummary.unavailableProfileIds.length}`])
   rows.push(["compact.default", config.defaultCompactPackKey])
   rows.push(["compact.packs", `${listCompactPacks(config).length}`])
-  rows.push(["cli.required", providerSummary.cliTools.filter((tool) => tool.required).map((tool) => tool.id).join(", ") || "none"])
+  rows.push([
+    "cli.required",
+    providerSummary.cliTools.filter((tool) => tool.required).map((tool) => tool.id).join(", ") || "none",
+  ])
 
-  process.stdout.write("Preflight Report\n")
-  for (const [name, value] of rows) {
-    process.stdout.write(`- ${name}: ${value}\n`)
+  if (connectorBackend !== "none") {
+    rows.push(["env.CONNECTOR_API_KEY", statusText(connectorApiConfigured)])
+  }
+  if (executionBackend !== "standalone") {
+    rows.push(["env.REMOTE_INBOX_SECRET", statusText(remoteInboxConfigured)])
   }
 
   const issues = []
-  if (!config.bridgeSecret && !config.allowUnsecuredBridge) issues.push("BRIDGE_SECRET missing")
-  if (!config.swarmclawAccessKey) issues.push("SWARMCLAW_ACCESS_KEY missing")
-  if (!config.inboxWebhookSecret) issues.push("INBOX_WEBHOOK_SECRET missing")
-  for (const issue of config.configIssues) {
-    issues.push(`config issue: ${issue}`)
+  const warnings = []
+
+  if (!config.bridgeSecret && !config.allowUnsecuredBridge) {
+    issues.push("BRIDGE_SECRET missing")
   }
-  for (const toolId of providerSummary.missingRequiredCliTools) {
-    issues.push(`required cli missing: ${toolId}`)
+  if (!startupOnly && connectorBackend !== "none" && !connectorApiConfigured) {
+    issues.push("CONNECTOR_API_KEY missing")
+  }
+  if (!startupOnly && executionBackend !== "standalone" && !remoteInboxConfigured) {
+    issues.push("REMOTE_INBOX_SECRET missing")
+  }
+  for (const issue of config.configIssues || []) {
+    warnings.push(`config issue: ${issue}`)
+  }
+  for (const toolId of providerSummary.missingRequiredCliTools || []) {
+    warnings.push(`required cli missing: ${toolId}`)
   }
 
-  if (issues.length > 0) {
+  return {
+    rows,
+    issues,
+    warnings,
+    executionBackend,
+    connectorBackend,
+  }
+}
+
+async function runPreflight() {
+  const config = loadLocalConfig()
+  const providerSummary = buildProviderSummary(config)
+  const report = buildPreflightReport(config, providerSummary)
+
+  process.stdout.write("Preflight Report\n")
+  for (const [name, value] of report.rows) {
+    process.stdout.write(`- ${name}: ${value}\n`)
+  }
+
+  if (report.warnings.length > 0) {
+    process.stdout.write("\nWarnings\n")
+    for (const warning of report.warnings) {
+      process.stdout.write(`- ${warning}\n`)
+    }
+  }
+
+  if (report.issues.length > 0) {
     process.stdout.write("\nMissing / Broken\n")
-    for (const issue of issues) {
+    for (const issue of report.issues) {
       process.stdout.write(`- ${issue}\n`)
     }
 
@@ -216,7 +269,7 @@ async function runPreflight() {
     process.exit(2)
   }
 
-  process.stdout.write("\nPreflight checks passed.\n")
+  process.stdout.write(`\nPreflight checks passed${report.warnings.length > 0 ? " with warnings" : ""}.\n`)
 }
 
 async function runDoctor({ bridgeUrl }) {
@@ -445,8 +498,14 @@ async function main() {
   process.exit(1)
 }
 
-main().catch((err) => {
-  const message = err instanceof Error ? err.message : String(err)
-  process.stderr.write(`agentsswarm cli error: ${message}\n`)
-  process.exit(1)
-})
+const isDirectInvocation = process.argv[1]
+  ? path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))
+  : false
+
+if (isDirectInvocation) {
+  main().catch((err) => {
+    const message = err instanceof Error ? err.message : String(err)
+    process.stderr.write(`agentsswarm cli error: ${message}\n`)
+    process.exit(1)
+  })
+}
