@@ -246,6 +246,8 @@ Operational pattern that works well:
 
 The recommended default path in this repo is the compact AgentSwarm app with packs that stay below the 8-agent cap:
 
+**Built-in packs:**
+
 | Pack         | Best For                                | Size |
 | ------------ | --------------------------------------- | ---- |
 | `software-6` | software delivery, review, deploy loops | 6    |
@@ -253,7 +255,17 @@ The recommended default path in this repo is the compact AgentSwarm app with pac
 | `research-5` | synthesis, reports, market scans        | 5    |
 | `support-5`  | multi-channel support and triage        | 5    |
 
-See [`agentsswarm/README.md`](agentsswarm/README.md) for the runtime, CLI, provider profiles, and chat channel contract.
+**Custom pack templates** available in [`templates/samples/`](templates/samples/README.md):
+
+| Pack | Best For | Size |
+|------|----------|------|
+| `dev-ops-corp` | Coding & release workflows | 9 |
+| `research_report` | Research → fact-check → polished report | 6 |
+| `review_desk` | Multi-specialist review with PASS/FAIL verdicts | 6 |
+| `financial_analyst` | Market analysis → risk assessment → briefing | 6 |
+| `second_brain` | Personal knowledge capture & retrieval | 7 |
+
+See [`agentsswarm/README.md`](agentsswarm/README.md) for the runtime, CLI, provider profiles, and chat channel contract. See [`templates/samples/README.md`](templates/samples/README.md) for full pack details and deployment commands.
 
 If you need a dashboard/control-plane on top, add [`SWARMCLAW_SETUP.md`](SWARMCLAW_SETUP.md) and follow [`SWARMCLAW_GUIDANCE.md`](SWARMCLAW_GUIDANCE.md).
 

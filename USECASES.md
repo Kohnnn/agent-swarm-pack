@@ -16,6 +16,7 @@ Primary source: [awesome-openclaw-usecases](https://github.com/hesamsheikh/aweso
 - **Family Calendar & Household Assistant:** combines schedules, reminders, and home inventory workflows.
 - **Semantic Memory Search:** vector-powered retrieval on markdown memory.
 - **Event Guest Confirmation:** automated voice-call attendee confirmation workflows.
+- **Custom Pack Templates:** deploy-ready agent swarms for research reports, financial analysis, review desks, and personal knowledge management — see [`templates/samples/README.md`](templates/samples/README.md).
 
 ---
 
@@ -43,6 +44,8 @@ Primary source: [awesome-openclaw-usecases](https://github.com/hesamsheikh/aweso
 
 - **n8n Workflow Orchestration:** delegate integrations through webhook-based flows.
 - **Self-Healing Home Server:** monitor, restart, and maintain services over SSH.
+- **DevOpsCorp Pack:** 9-agent coding and release workflow — orchestrator → execution tracks → reviewer gate → release-ready — see [`templates/samples/README.md`](templates/samples/README.md).
+- **Review Desk Pack:** 6-agent multi-specialist review with structured feedback and PASS/FAIL verdicts — see [`templates/samples/README.md`](templates/samples/README.md).
 
 ---
 
@@ -64,7 +67,7 @@ Primary source: [awesome-openclaw-usecases](https://github.com/hesamsheikh/aweso
 - **Custom Morning Brief:** automated personalized daily briefing.
 - **Automated Meeting Notes and Action Items:** transcript -> summary -> assigned tasks.
 - **Habit Tracker and Accountability Coach:** daily nudges and adaptive accountability messages.
-- **Second Brain:** memory capture + retrieval through chat and dashboard.
+- **Second Brain:** memory capture + retrieval through chat and dashboard — deploy the 7-agent pack at [`templates/samples/README.md`](templates/samples/README.md).
 - **Event Guest Confirmation:** call guest list, track confirmations, and summarize outcomes.
 
 ---
@@ -76,12 +79,14 @@ Primary source: [awesome-openclaw-usecases](https://github.com/hesamsheikh/aweso
 - **Market Research and Product Factory:** mine pain points and generate build opportunities.
 - **Pre-Build Idea Validator:** evaluate competition and market saturation before coding.
 - **Semantic Memory Search:** hybrid retrieval for long-term memory files.
+- **Research Report Pack:** 6-agent team for structured research → fact-check → polished report — see [`templates/samples/README.md`](templates/samples/README.md).
 
 ---
 
 ## 💰 Finance and Trading
 
 - **AgentSwarm Research + Ops Packs:** pair `research-5` and `ops-5` for market scans, alerts, and execution guardrails — see [`agentsswarm/README.md`](agentsswarm/README.md).
+- **Financial Analyst Pack:** 6-agent team for market research → quantitative analysis → risk assessment → decision briefing — see [`templates/samples/README.md`](templates/samples/README.md).
 - **Legacy FTS Office Pack:** older 9-agent fintech office reference remains available in [`templates/claw-empire-integration/FTS_USE_CASE.md`](templates/claw-empire-integration/FTS_USE_CASE.md).
 - **Polymarket Autopilot:** paper-trading style automation and performance reporting.
 
@@ -95,6 +100,7 @@ Use strict safety controls and small limits for any finance-related automation.
 2. Start with one high-frequency pain point (daily brief, inbox, or support).
 3. Add one automation loop (cron or webhook).
 4. Add multi-agent roles only after single-agent flow is stable.
+5. Want a ready-made team? Browse the **custom pack templates** in [`templates/samples/`](templates/samples/README.md) — each pack is a complete agent roster with deployment commands.
 
 ---
 

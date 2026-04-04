@@ -132,6 +132,18 @@ Built-in compact packs:
 - `research-5`: synthesis and analysis
 - `support-5`: multi-channel support
 
+**Custom pack templates** for specialized workflows are available in [`templates/samples/`](templates/samples/README.md) and can be deployed alongside or instead of the built-in packs:
+
+| Pack | Use Case | Agents |
+|------|----------|--------|
+| `dev-ops-corp` | Coding & release workflows | 9 |
+| `research_report` | Research → fact-check → polished report | 6 |
+| `review_desk` | Multi-specialist review with verdicts | 6 |
+| `financial_analyst` | Market analysis → risk assessment → briefing | 6 |
+| `second_brain` | Personal knowledge capture & retrieval | 7 |
+
+See [`templates/samples/README.md`](templates/samples/README.md) for the full pack library, agent rosters, and deployment commands.
+
 Built-in default provider profile set:
 
 - `codex-main`

@@ -6,7 +6,7 @@ This repository contains curated agent swarm packs for different use cases. Each
 
 ### DevOpsCorp — Coding & Dev Workflows
 
-Located in `DevOpsCorp/`, these packs specialize in software engineering and release workflows.
+Located in `dev-ops-corp/`, these packs specialize in software engineering and release workflows.
 
 #### Included Packs
 
@@ -54,6 +54,18 @@ Located in `DevOpsCorp/`, these packs specialize in software engineering and rel
 | `risk_assessor` | Scenario analysis, stress tests, risk matrices |
 | `finance_report_writer` | Narrative drafting, executive summaries |
 | `data_visualizer` | Charts, dashboards, presentation visuals |
+
+#### Second Brain Pack (1 Lead + 6)
+
+| Agent | Role |
+|-------|------|
+| `orchestrator_agent` | Central coordinator (Thalamus: routing & signal filtering) |
+| `capture_agent` | Intake & collection (Sensory cortex: initial processing) |
+| `tagger_agent` | Semantic tagging & categorization |
+| `memory_writer_agent` | Memory consolidation (Hippocampus: encoding & retrieval) |
+| `search_agent` | Query processing & recall |
+| `recall_agent` | Long-term memory retrieval |
+| `synthesis_agent` | Cross-domain synthesis (Prefrontal cortex: reasoning) |
 
 ---
 
@@ -115,10 +127,10 @@ done
 
 ```bash
 for agent in research_lead crawler_specialist fact_check_lead data_analyst technical_writer summary_editor; do
-  cp templates/samples/DevOpsCorp/research_report/$agent/SOUL.md ~/.openclaw/workspace-$agent/SOUL.md
-  cp templates/samples/DevOpsCorp/research_report/$agent/AGENTS.md ~/.openclaw/workspace-$agent/AGENTS.md
-  cp templates/samples/DevOpsCorp/research_report/$agent/IDENTITY.md ~/.openclaw/workspace-$agent/IDENTITY.md
-  cp templates/samples/DevOpsCorp/research_report/$agent/TOOLS.md ~/.openclaw/workspace-$agent/TOOLS.md
+  cp templates/samples/research_report/$agent/SOUL.md ~/.openclaw/workspace-$agent/SOUL.md
+  cp templates/samples/research_report/$agent/AGENTS.md ~/.openclaw/workspace-$agent/AGENTS.md
+  cp templates/samples/research_report/$agent/IDENTITY.md ~/.openclaw/workspace-$agent/IDENTITY.md
+  cp templates/samples/research_report/$agent/TOOLS.md ~/.openclaw/workspace-$agent/TOOLS.md
 done
 ```
 
