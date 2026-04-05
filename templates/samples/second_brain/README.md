@@ -160,3 +160,80 @@ confidence: <HIGH / MEDIUM / LOW>
 - Never return raw notes — synthesis_agent always writes the final answer
 - Be honest about gaps — "I couldn't find anything about X" is more useful than a made-up answer
 - orchestrator_agent routes invisibly — the user only sees synthesis_agent's output
+
+---
+
+## GoClaw Team Deployment
+
+Deploy this pack as a GoClaw agent team with shared task board and mailbox.
+
+### 1. Create the team
+
+```bash
+goclaw team create second-brain
+```
+
+### 2. Create and add agents
+
+```bash
+goclaw agents create orchestrator_agent --team second-brain --role lead
+goclaw agents create capture_agent --team second-brain
+goclaw agents create tagger_agent --team second-brain
+goclaw agents create memory_writer_agent --team second-brain
+goclaw agents create search_agent --team second-brain
+goclaw agents create recall_agent --team second-brain
+goclaw agents create synthesis_agent --team second-brain
+```
+
+### 3. Inject context files
+
+```bash
+for agent in orchestrator_agent capture_agent tagger_agent memory_writer_agent search_agent recall_agent synthesis_agent; do
+  goclaw agents inject $agent --path templates/samples/second_brain/$agent/
+done
+```
+
+### 4. Inject shared files
+
+```bash
+for agent in orchestrator_agent capture_agent tagger_agent memory_writer_agent search_agent recall_agent synthesis_agent; do
+  goclaw agents inject $agent --path templates/samples/shared/USER.md --target USER.md
+  goclaw agents inject $agent --path templates/samples/shared/TOOLS.md --target TOOLS.md
+done
+```
+
+### 5. Configure delegation links
+
+```bash
+goclaw team link second-brain --from orchestrator_agent --to capture_agent
+goclaw team link second-brain --from orchestrator_agent --to tagger_agent
+goclaw team link second-brain --from orchestrator_agent --to memory_writer_agent
+goclaw team link second-brain --from orchestrator_agent --to search_agent
+goclaw team link second-brain --from orchestrator_agent --to recall_agent
+goclaw team link second-brain --from orchestrator_agent --to synthesis_agent
+```
+
+### 6. Bind to channel
+
+```bash
+goclaw channels bind second-brain --channel telegram:@YourSecondBrainBot
+```
+
+For full details on team task board workflow, delegation patterns, and per-pack tool configuration, see [GOCLAW_PACKS.md](../../GOCLAW_PACKS.md).
+
+---
+
+## Internal Task Board Workflow
+
+When GoClaw team task board is active:
+
+| Stage | Task | Owner |
+|-------|------|-------|
+| Capture | `brain: capture item` | `capture_agent` |
+| Tag | `brain: tag and classify` | `tagger_agent` |
+| File | `brain: write to storage` | `memory_writer_agent` |
+| Search | `brain: semantic recall` | `search_agent` |
+| Timeline | `brain: time-based recall` | `recall_agent` |
+| Synthesize | `brain: build answer` | `synthesis_agent` |
+
+orchestrator_agent routes every input. For capture flows, it chains capture → tag → file. For query flows, it runs search + recall in parallel, then synthesizes. All tasks are tracked on the shared board.

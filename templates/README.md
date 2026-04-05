@@ -1,48 +1,100 @@
-# Agent Template Pack
+# Agent Template Pack (GoClaw)
 
 This folder contains starter templates for per-agent injection:
 
-- `SOUL.md`
-- `AGENTS.md`
-- `IDENTITY.md`
-- `USER.md`
-- `TOOLS.md`
+- `SOUL.md` — persona, core truths, scope, hard constraints
+- `AGENTS.md` — workspace conventions, safety, memory, heartbeat policy
+- `IDENTITY.md` — public persona metadata (name, emoji, communication style)
+- `USER.md` — human profile, project context, decision preferences
+- `TOOLS.md` — role-specific tool notes and operational guardrails
 
-Use-case packs:
+Use-case packs live in `samples/`:
 
-- `samples/` contains a complete 5-agent swarm template set for Discord:
-  `orchestrator`, `sub1`, `sub2`, `sub3`, `reviewer`, plus shared `USER.md`
-  and shared `TOOLS.md`.
+- `samples/dev-ops-corp/` — 9-agent DevOps/swe workflow team
+- `samples/research_report/` — 6-agent research pipeline team
+- `samples/review_desk/` — 6-agent review gate team
+- `samples/financial_analyst/` — 6-agent financial intelligence team
+- `samples/second_brain/` — 7-agent personal knowledge management team
 
-## Quick Inject Workflow
+## GoClaw Quick Inject Workflow
 
-1. Create agent and find workspace path.
-
-```bash
-openclaw agents add coding --workspace ~/.openclaw/workspace-coding
-openclaw agents list --json
-```
-
-2. Copy templates into that workspace.
+### 1. Create the agent
 
 ```bash
-cp templates/SOUL.md ~/.openclaw/workspace-coding/SOUL.md
-cp templates/AGENTS.md ~/.openclaw/workspace-coding/AGENTS.md
-cp templates/IDENTITY.md ~/.openclaw/workspace-coding/IDENTITY.md
-cp templates/USER.md ~/.openclaw/workspace-coding/USER.md
-cp templates/TOOLS.md ~/.openclaw/workspace-coding/TOOLS.md
+goclaw agents create coding --workspace ~/.goclaw/agents/coding
 ```
 
-3. Replace placeholders (`<...>`) with project-specific values.
-
-4. Apply identity into agent config.
+### 2. Inject template files
 
 ```bash
-openclaw agents set-identity --workspace ~/.openclaw/workspace-coding --from-identity
+goclaw agents inject coding --path templates/SOUL.md
+goclaw agents inject coding --path templates/AGENTS.md
+goclaw agents inject coding --path templates/IDENTITY.md
+goclaw agents inject coding --path templates/USER.md
+goclaw agents inject coding --path templates/TOOLS.md
 ```
 
-5. Validate with a direct turn.
+### 3. Replace placeholders
+
+Edit `~/.goclaw/agents/coding/` files to fill in agent-specific values.
+
+### 4. Verify
 
 ```bash
-openclaw agent --agent coding --message "status-check: identity and soul loaded"
+goclaw agents list
+goclaw agents status coding
 ```
+
+## GoClaw Team Workflow
+
+To create a multi-agent team:
+
+```bash
+# 1. Create team
+goclaw team create my-team
+
+# 2. Create agents with team membership
+goclaw agents create lead --team my-team --role lead
+goclaw agents create member1 --team my-team
+
+# 3. Inject context files
+goclaw agents inject lead --path templates/SOUL.md
+goclaw agents inject member1 --path templates/SOUL.md
+
+# 4. Set up delegation links
+goclaw team link my-team --from lead --to member1
+
+# 5. Bind to channel
+goclaw channels bind my-team --channel telegram:@YourBot
+```
+
+For full team deployment of use-case packs, see [GOCLAW_PACKS.md](../GOCLAW_PACKS.md).
+
+## Memory System
+
+GoClaw agents have a built-in memory system:
+
+- **Daily notes:** `memory/YYYY-MM-DD.md` — raw session logs
+- **Long-term:** `MEMORY.md` — curated memories (main session only)
+
+Files are auto-created in each agent's workspace directory.
+
+## Skills
+
+GoClaw has a built-in skills system. Place skill definitions at:
+
+```
+~/.goclaw/skills/<skill-name>/SKILL.md
+```
+
+Skills are matched via BM25 + pgvector hybrid search when relevant.
+
+## Porting from OpenClaw
+
+| OpenClaw | GoClaw |
+|----------|--------|
+| `openclaw agents add` | `goclaw agents create` |
+| Manual file copy | `goclaw agents inject` |
+| `openclaw agents set-identity` | `goclaw agents inject IDENTITY.md` |
+| Channel config in JSON | `goclaw channels bind` |
+| N/A | `goclaw team create` + `team link` for delegation |

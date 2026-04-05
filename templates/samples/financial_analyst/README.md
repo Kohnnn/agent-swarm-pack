@@ -117,3 +117,79 @@ Recommendation: Consider staged entry or hedging with options.
 - Quantitative models are maps, not territory — always note limitations
 - finance_lead owns the final recommendation — not individual analysts
 - Market data is only as good as its source — always cite
+
+---
+
+## GoClaw Team Deployment
+
+Deploy this pack as a GoClaw agent team with shared task board and mailbox.
+
+### 1. Create the team
+
+```bash
+goclaw team create finance-analyst
+```
+
+### 2. Create and add agents
+
+```bash
+goclaw agents create finance_lead --team finance-analyst --role lead
+goclaw agents create market_researcher --team finance-analyst
+goclaw agents create quantitative_analyst --team finance-analyst
+goclaw agents create risk_assessor --team finance-analyst
+goclaw agents create finance_report_writer --team finance-analyst
+goclaw agents create data_visualizer --team finance-analyst
+```
+
+### 3. Inject context files
+
+```bash
+for agent in finance_lead market_researcher quantitative_analyst risk_assessor finance_report_writer data_visualizer; do
+  goclaw agents inject $agent --path templates/samples/financial_analyst/$agent/
+done
+```
+
+### 4. Inject shared files
+
+```bash
+for agent in finance_lead market_researcher quantitative_analyst risk_assessor finance_report_writer data_visualizer; do
+  goclaw agents inject $agent --path templates/samples/shared/USER.md --target USER.md
+  goclaw agents inject $agent --path templates/samples/shared/TOOLS.md --target TOOLS.md
+done
+```
+
+### 5. Configure delegation links
+
+```bash
+goclaw team link finance-analyst --from finance_lead --to market_researcher
+goclaw team link finance-analyst --from finance_lead --to quantitative_analyst
+goclaw team link finance-analyst --from finance_lead --to risk_assessor
+goclaw team link finance-analyst --from finance_lead --to finance_report_writer
+goclaw team link finance-analyst --from finance_lead --to data_visualizer
+```
+
+### 6. Bind to channel
+
+```bash
+goclaw channels bind finance-analyst --channel telegram:@YourFinanceBot
+```
+
+For full details on team task board workflow, delegation patterns, and per-pack tool configuration, see [GOCLAW_PACKS.md](../../GOCLAW_PACKS.md).
+
+---
+
+## Internal Task Board Workflow
+
+When GoClaw team task board is active:
+
+| Stage | Task | Owner |
+|-------|------|-------|
+| Intake | `finance: scope question` | `finance_lead` |
+| Research | `finance: market research` | `market_researcher` |
+| Model | `finance: statistical modeling` | `quantitative_analyst` |
+| Risk | `finance: risk scenarios` | `risk_assessor` |
+| Visualize | `finance: create charts` | `data_visualizer` |
+| Write | `finance: draft briefing` | `finance_report_writer` |
+| Deliver | `finance: deliver report` | `finance_lead` |
+
+finance_lead creates the task chain and assigns sequentially or in parallel where independence allows. risk_assessor runs after quantitative_analyst has models ready. data_visualizer works alongside finance_report_writer.

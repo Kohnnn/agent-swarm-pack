@@ -1,6 +1,8 @@
-# Agent Swarm Sample Packs (Discord + OpenClaw)
+# Agent Swarm Sample Packs (GoClaw)
 
-This repository contains curated agent swarm packs for different use cases. Each pack is a self-contained multi-agent team (1 lead + 5 members max) wired for Discord and OpenClaw.
+This repository contains curated agent swarm packs for different use cases. Each pack is a self-contained multi-agent team (1 lead + up to 5 members) deployable as a GoClaw agent team with a shared task board, mailbox, and delegation links.
+
+> **Note:** These packs were originally built for OpenClaw. They are fully compatible with GoClaw — see [GOCLAW_PACKS.md](../../GOCLAW_PACKS.md) for the complete porting and deployment guide.
 
 ## Pack Library
 
@@ -8,21 +10,19 @@ This repository contains curated agent swarm packs for different use cases. Each
 
 Located in `dev-ops-corp/`, these packs specialize in software engineering and release workflows.
 
-#### Included Packs
+| Agent | Role |
+|-------|------|
+| `orchestrator` | Planning, intake, task routing |
+| `sub1` | Execution track A (backend/API) |
+| `sub2` | Execution track B (automation/scripts) |
+| `sub3` | Execution track C (docs/ops) |
+| `reviewer` | QA gate, release readiness |
+| `compliance_auditor` | DevSecOps & compliance architecture |
+| `data_engineer` | Data pipeline & ETL specialist |
+| `security_architect` | Threat modeling, vulnerability review |
+| `test_automation` | Test strategy & automation |
 
-| Pack | Lead | Members | Purpose |
-|------|------|---------|---------|
-| `orchestrator` | — | — | Planning, intake, task routing |
-| `sub1` | — | — | Execution track A (backend/API) |
-| `sub2` | — | — | Execution track B (automation/scripts) |
-| `sub3` | — | — | Execution track C (docs/ops) |
-| `reviewer` | — | — | QA gate, release readiness |
-| `compliance_auditor` | — | — | DevSecOps & compliance architecture |
-| `data_engineer` | — | — | Data pipeline & ETL specialist |
-| `security_architect` | — | — | Threat modeling, vulnerability review |
-| `test_automation` | — | — | Test strategy & automation |
-
-#### Research Report Pack (1 Lead + 5)
+### Research Report Pack (1 Lead + 5)
 
 | Agent | Role |
 |-------|------|
@@ -33,7 +33,7 @@ Located in `dev-ops-corp/`, these packs specialize in software engineering and r
 | `technical_writer` | Drafts sections, translates for audience |
 | `summary_editor` | Final polish, formatting, release gate |
 
-#### Review Desk Pack (1 Lead + 5)
+### Review Desk Pack (1 Lead + 5)
 
 | Agent | Role |
 |-------|------|
@@ -44,7 +44,7 @@ Located in `dev-ops-corp/`, these packs specialize in software engineering and r
 | `quality_assurance` | Testing, release readiness sign-off |
 | `feedback_curator` | Synthesizes and delivers reviewer feedback |
 
-#### Financial Analyst Pack (1 Lead + 5)
+### Financial Analyst Pack (1 Lead + 5)
 
 | Agent | Role |
 |-------|------|
@@ -55,7 +55,7 @@ Located in `dev-ops-corp/`, these packs specialize in software engineering and r
 | `finance_report_writer` | Narrative drafting, executive summaries |
 | `data_visualizer` | Charts, dashboards, presentation visuals |
 
-#### Second Brain Pack (1 Lead + 6)
+### Second Brain Pack (1 Lead + 6)
 
 | Agent | Role |
 |-------|------|
@@ -78,14 +78,74 @@ Each agent folder contains:
 - `IDENTITY.md` — public persona metadata (name, emoji, communication style)
 - `TOOLS.md` — role-specific tool notes and operational guardrails
 
-Shared across all agents:
+Shared across all agents in a pack:
 
 - `shared/USER.md` — human profile, project context, decision preferences
-- `shared/TOOLS.md` — Discord channels, runtime paths, provider setup
+- `shared/TOOLS.md` — channel IDs, runtime paths, provider setup
 
 ---
 
-## Discord Channel Map (DevOpsCorp Default)
+## GoClaw Team Deployment
+
+GoClaw deploys packs as **agent teams** — one lead agent plus member agents, all sharing a task board (`team_tasks` tool), mailbox for async delegation, and configurable cron schedules.
+
+For the full step-by-step walkthrough, see [GOCLAW_PACKS.md](../../GOCLAW_PACKS.md).
+
+### Quick Deploy (Research Report Pack Example)
+
+```bash
+# 1. Create the team
+goclaw team create research-swarm
+
+# 2. Create agents and add to team
+goclaw agents create research_lead --team research-swarm --role lead
+goclaw agents create crawler_specialist --team research-swarm
+goclaw agents create fact_check_lead --team research-swarm
+goclaw agents create data_analyst --team research-swarm
+goclaw agents create technical_writer --team research-swarm
+goclaw agents create summary_editor --team research-swarm
+
+# 3. Inject context files (SOUL, IDENTITY, AGENTS, TOOLS)
+goclaw agents inject research_lead --path templates/samples/research_report/research_lead/
+goclaw agents inject crawler_specialist --path templates/samples/research_report/crawler_specialist/
+goclaw agents inject fact_check_lead --path templates/samples/research_report/fact_check_lead/
+goclaw agents inject data_analyst --path templates/samples/research_report/data_analyst/
+goclaw agents inject technical_writer --path templates/samples/research_report/technical_writer/
+goclaw agents inject summary_editor --path templates/samples/research_report/summary_editor/
+
+# 4. Inject shared files
+for agent in research_lead crawler_specialist fact_check_lead data_analyst technical_writer summary_editor; do
+  goclaw agents inject $agent --path templates/samples/shared/USER.md --target USER.md
+  goclaw agents inject $agent --path templates/samples/shared/TOOLS.md --target TOOLS.md
+done
+
+# 5. Configure delegation links (lead → members)
+goclaw team link research-swarm --from research_lead --to crawler_specialist
+goclaw team link research-swarm --from research_lead --to fact_check_lead
+goclaw team link research-swarm --from research_lead --to data_analyst
+goclaw team link research-swarm --from research_lead --to technical_writer
+goclaw team link research-swarm --from research_lead --to summary_editor
+
+# 6. Bind to a channel
+goclaw channels bind research-swarm --channel telegram:@YourResearchBot
+```
+
+### GoClaw vs OpenClaw Command Map
+
+| Operation | OpenClaw | GoClaw |
+|-----------|----------|--------|
+| Create agent | `openclaw agents add` | `goclaw agents create` |
+| Inject files | Manual cp | `goclaw agents inject` |
+| List agents | `openclaw agents list` | `goclaw agents list` |
+| Team setup | N/A | `goclaw team create` |
+| Delegation | Via channels | Via `team_tasks` + mailbox |
+| Bind channel | `openclaw channels bind` | `goclaw channels bind` |
+
+---
+
+## Discord Channel Map (DevOpsCorp — Legacy)
+
+> **GoClaw teams use task boards instead of Discord channels for internal coordination.** The map below is retained for reference when wiring individual agents to Discord, but the team-internal workflow uses GoClaw's shared task board and mailbox.
 
 | Channel | Purpose |
 |---------|---------|
@@ -99,89 +159,19 @@ Shared across all agents:
 
 ---
 
-## Quick Start — Deploy a Pack
-
-### 1. Create agents and workspaces
-
-```bash
-# Example: deploy research_report pack
-openclaw agents add research_lead --workspace ~/.openclaw/workspace-research_lead
-openclaw agents add crawler_specialist --workspace ~/.openclaw/workspace-crawler_specialist
-openclaw agents add fact_check_lead --workspace ~/.openclaw/workspace-fact_check_lead
-openclaw agents add data_analyst --workspace ~/.openclaw/workspace-data_analyst
-openclaw agents add technical_writer --workspace ~/.openclaw/workspace-technical_writer
-openclaw agents add summary_editor --workspace ~/.openclaw/workspace-summary_editor
-openclaw agents list --json
-```
-
-### 2. Copy shared files into each workspace
-
-```bash
-for agent in research_lead crawler_specialist fact_check_lead data_analyst technical_writer summary_editor; do
-  cp templates/samples/shared/USER.md ~/.openclaw/workspace-$agent/USER.md
-  cp templates/samples/shared/TOOLS.md ~/.openclaw/workspace-$agent/TOOLS.shared.md
-done
-```
-
-### 3. Copy agent files into each workspace
-
-```bash
-for agent in research_lead crawler_specialist fact_check_lead data_analyst technical_writer summary_editor; do
-  cp templates/samples/research_report/$agent/SOUL.md ~/.openclaw/workspace-$agent/SOUL.md
-  cp templates/samples/research_report/$agent/AGENTS.md ~/.openclaw/workspace-$agent/AGENTS.md
-  cp templates/samples/research_report/$agent/IDENTITY.md ~/.openclaw/workspace-$agent/IDENTITY.md
-  cp templates/samples/research_report/$agent/TOOLS.md ~/.openclaw/workspace-$agent/TOOLS.md
-done
-```
-
-### 4. Import identities
-
-```bash
-for agent in research_lead crawler_specialist fact_check_lead data_analyst technical_writer summary_editor; do
-  openclaw agents set-identity --workspace ~/.openclaw/workspace-$agent --from-identity
-done
-```
-
-### 5. Validate bindings
-
-```bash
-openclaw agents list --bindings --json
-openclaw channels status --probe
-openclaw gateway status
-```
-
----
-
 ## Provider Setup
 
 ```bash
-openclaw onboard --openai-api-key "$OPENAI_API_KEY"
-openclaw onboard --anthropic-api-key "$ANTHROPIC_API_KEY"
-
-openclaw onboard --auth-choice openai-codex
-openclaw models auth login --provider openai-codex
-
-openclaw plugins enable qwen-portal-auth
-openclaw models auth login --provider qwen-portal --set-default
+goclaw config set openai_api_key "$OPENAI_API_KEY"
+goclaw config set anthropic_api_key "$ANTHROPIC_API_KEY"
+goclaw models default --provider openai --model gpt-4o
 ```
 
-Provider mapping guidance (per pack):
+Model guidance per agent role:
 
-- **Lead agents** — high-reasoning model
-- **Specialist members** — balanced cost/performance model
-- **Review/QA agents** — reliable model with strict quality checks
-
----
-
-## Config Sample
-
-Use `openclaw.discord.swarm.sample.json5` as the base and replace placeholders.
-
----
-
-## Prompt Starters
-
-Use `PROMPTS.md` for role-specific task prompts.
+- **Lead agents** — high-reasoning model (e.g., `gpt-4o`, `claude-sonnet-4`)
+- **Specialist members** — balanced cost/performance model (e.g., `gpt-4o-mini`, `claude-haiku-4`)
+- **Review/QA agents** — reliable model with strong instruction following
 
 ---
 
@@ -204,8 +194,11 @@ pack_name/
 │   └── ...
 ├── member_4/
 │   └── ...
-└── member_5/
-    └── ...
+├── member_5/
+│   └── ...
+└── shared/
+    ├── USER.md
+    └── TOOLS.md
 ```
 
-The injection workflow is identical for any pack — just swap the pack path and agent names.
+The GoClaw injection workflow is identical for any pack — swap the pack path and agent names. See [GOCLAW_PACKS.md](../../GOCLAW_PACKS.md) for the full per-pack tool configuration commands.

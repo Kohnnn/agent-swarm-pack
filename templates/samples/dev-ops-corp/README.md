@@ -48,6 +48,8 @@ User → #inbox-user
 
 ## Discord Channel Map
 
+> **GoClaw teams use task boards internally for team coordination.** The map below is retained for reference when wiring individual agents to Discord channels, but team-internal workflow uses GoClaw's shared task board and mailbox.
+
 | Channel | Purpose |
 |---------|---------|
 | `#inbox-user` | User → orchestrator intake |
@@ -57,53 +59,6 @@ User → #inbox-user
 | `#work-sub3` | Track C execution |
 | `#reviewer-gate` | Review submission queue |
 | `#release-ready` | Approved output for delivery |
-
-## Workflow Steps
-
-### 1. Deploy the Pack
-
-```bash
-for agent in orchestrator sub1 sub2 sub3 reviewer compliance_auditor data_engineer security_architect test_automation; do
-  openclaw agents add $agent --workspace ~/.openclaw/workspace-$agent
-done
-```
-
-### 2. Copy Shared Files
-
-```bash
-for agent in orchestrator sub1 sub2 sub3 reviewer compliance_auditor data_engineer security_architect test_automation; do
-  cp templates/samples/shared/USER.md ~/.openclaw/workspace-$agent/USER.md
-  cp templates/samples/shared/TOOLS.md ~/.openclaw/workspace-$agent/TOOLS.shared.md
-done
-```
-
-### 3. Copy Agent Files
-
-```bash
-# Example for orchestrator
-cp templates/samples/dev-ops-corp/orchestrator/SOUL.md ~/.openclaw/workspace-orchestrator/SOUL.md
-cp templates/samples/dev-ops-corp/orchestrator/AGENTS.md ~/.openclaw/workspace-orchestrator/AGENTS.md
-cp templates/samples/dev-ops-corp/orchestrator/IDENTITY.md ~/.openclaw/workspace-orchestrator/IDENTITY.md
-cp templates/samples/dev-ops-corp/orchestrator/TOOLS.md ~/.openclaw/workspace-orchestrator/TOOLS.md
-
-# Repeat for each agent (sub1, sub2, sub3, reviewer, compliance_auditor, data_engineer, security_architect, test_automation)
-```
-
-### 4. Import Identities
-
-```bash
-for agent in orchestrator sub1 sub2 sub3 reviewer compliance_auditor data_engineer security_architect test_automation; do
-  openclaw agents set-identity --workspace ~/.openclaw/workspace-$agent --from-identity
-done
-```
-
-### 5. Validate
-
-```bash
-openclaw agents list --bindings --json
-openclaw channels status --probe
-openclaw gateway status
-```
 
 ## Typical Usage
 
@@ -128,3 +83,88 @@ Approved work appears in `#release-ready`.
 - Never bypass the reviewer gate
 - Escalate security findings to compliance_auditor and security_architect before reviewer gate
 - Sub-agents don't speak directly to users — orchestrator owns all user communication
+
+---
+
+## GoClaw Team Deployment
+
+Deploy this pack as a GoClaw agent team with shared task board and mailbox.
+
+### 1. Create the team
+
+```bash
+goclaw team create devops-corp
+```
+
+### 2. Create and add agents
+
+```bash
+goclaw agents create orchestrator --team devops-corp --role lead
+goclaw agents create sub1 --team devops-corp
+goclaw agents create sub2 --team devops-corp
+goclaw agents create sub3 --team devops-corp
+goclaw agents create reviewer --team devops-corp
+goclaw agents create compliance_auditor --team devops-corp
+goclaw agents create data_engineer --team devops-corp
+goclaw agents create security_architect --team devops-corp
+goclaw agents create test_automation --team devops-corp
+```
+
+### 3. Inject context files
+
+```bash
+for agent in orchestrator sub1 sub2 sub3 reviewer compliance_auditor data_engineer security_architect test_automation; do
+  goclaw agents inject $agent --path templates/samples/dev-ops-corp/$agent/
+done
+```
+
+### 4. Inject shared files
+
+```bash
+for agent in orchestrator sub1 sub2 sub3 reviewer compliance_auditor data_engineer security_architect test_automation; do
+  goclaw agents inject $agent --path templates/samples/shared/USER.md --target USER.md
+  goclaw agents inject $agent --path templates/samples/shared/TOOLS.md --target TOOLS.md
+done
+```
+
+### 5. Configure delegation links
+
+```bash
+goclaw team link devops-corp --from orchestrator --to sub1
+goclaw team link devops-corp --from orchestrator --to sub2
+goclaw team link devops-corp --from orchestrator --to sub3
+goclaw team link devops-corp --from orchestrator --to reviewer
+goclaw team link devops-corp --from orchestrator --to compliance_auditor
+goclaw team link devops-corp --from orchestrator --to data_engineer
+goclaw team link devops-corp --from orchestrator --to security_architect
+goclaw team link devops-corp --from orchestrator --to test_automation
+```
+
+### 6. Bind to channel
+
+```bash
+goclaw channels bind devops-corp --channel discord:#devops-inbox
+```
+
+For full details on team task board workflow, delegation patterns, and per-pack tool configuration, see [GOCLAW_PACKS.md](../../GOCLAW_PACKS.md).
+
+---
+
+## Internal Task Board Workflow
+
+When GoClaw team task board is active:
+
+| Stage | Task | Owner |
+|-------|------|-------|
+| Intake | `devops: intake + plan` | `orchestrator` |
+| Track A | `devops: execute sub1` | `sub1` |
+| Track B | `devops: execute sub2` | `sub2` |
+| Track C | `devops: execute sub3` | `sub3` |
+| Security | `devops: security review` | `security_architect` |
+| Compliance | `devops: compliance check` | `compliance_auditor` |
+| Testing | `devops: test planning` | `test_automation` |
+| Data | `devops: data pipeline` | `data_engineer` |
+| Review | `devops: QA gate` | `reviewer` |
+| Release | `devops: release ready` | `orchestrator` |
+
+orchestrator creates tasks for all sub-tracks in parallel. security_architect, compliance_auditor, and test_automation run in parallel after sub-tracks complete. reviewer is the final gate before orchestrator marks release-ready.

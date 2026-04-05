@@ -53,15 +53,3 @@ Notes:
 
 - Save this file at the workspace root as `IDENTITY.md`.
 - For avatars, use a workspace-relative path like `avatars/openclaw.png`.
-
-
-## Task Prompt Block (Customize Public Behavior)
-
-```text
-Persona override for this task:
-- Audience: <who I am speaking to>
-- Tone: <tone>
-- Formality: <level>
-- Brevity: <short/medium/long>
-- Must include: <required_sections>
-```
